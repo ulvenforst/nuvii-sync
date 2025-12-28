@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Nuvii_Sync.CloudSync.Native;
@@ -61,13 +62,15 @@ namespace Nuvii_Sync.CloudSync
         /// Called when a file or folder is created in the client folder.
         /// Detects Move operations when a Delete+Create happens within a short window.
         /// </summary>
-        public void OnCreated(string fullPath)
+        /// <param name="fullPath">Full path to the created file/folder</param>
+        /// <param name="isPlaceholder">True if the file is a dehydrated placeholder</param>
+        public void OnCreated(string fullPath, bool isPlaceholder = false)
         {
             if (_disposed) return;
 
             var relativePath = GetRelativePath(fullPath);
             var fileName = Path.GetFileName(fullPath);
-            Trace.WriteLine($"[Client→Server] Created detected: {relativePath}");
+            Trace.WriteLine($"[Client→Server] Created detected: {relativePath}{(isPlaceholder ? " (placeholder)" : "")}");
 
             // Check if this is actually a Move (Delete + Create with same filename)
             if (_recentlyDeleted.TryRemove(fileName, out var deletedInfo))
@@ -83,6 +86,9 @@ namespace Nuvii_Sync.CloudSync
                     {
                         CancelTimer(pendingDelete);
                     }
+
+                    // Mark as not-in-sync to show sync indicator (blue arrows)
+                    MarkAsNotInSync(fullPath);
 
                     // Create a Rename operation (which handles moves)
                     var moveOperation = new PendingOperation
@@ -111,6 +117,14 @@ namespace Nuvii_Sync.CloudSync
                         });
                     return;
                 }
+            }
+
+            // If it's a placeholder and not a move, skip it
+            // (It was created by server sync, not by the user)
+            if (isPlaceholder)
+            {
+                Trace.WriteLine($"  Skipping placeholder (not a move): {relativePath}");
+                return;
             }
 
             // Normal Create operation
@@ -185,6 +199,9 @@ namespace Nuvii_Sync.CloudSync
             }
 
             // No pending Create - this is a standalone rename of an existing file
+            // Mark as not-in-sync to show sync indicator (blue arrows)
+            MarkAsNotInSync(newFullPath);
+
             var renameOperation = new PendingOperation
             {
                 CurrentPath = newFullPath,
@@ -508,6 +525,10 @@ namespace Nuvii_Sync.CloudSync
                 Trace.WriteLine($"  Renamed file on server: {operation.OriginalRelativePath} → {operation.RelativePath}");
             }
 
+            // Update placeholder's FileIdentity to match new path
+            // This is critical - without this, hydration will look for the old path
+            UpdatePlaceholderIdentity(operation.CurrentPath, operation.RelativePath);
+
             // Mark as synced (auto-detects if placeholder or regular file)
             MarkAsInSync(operation.CurrentPath);
 
@@ -633,21 +654,37 @@ namespace Nuvii_Sync.CloudSync
                     else
                     {
                         // Regular file: Convert to placeholder with in-sync flag
-                        hr = CfApi.CfConvertToPlaceholder(
-                            handle,
-                            nint.Zero,  // No file identity needed
-                            0,
-                            CF_CONVERT_FLAGS.CF_CONVERT_FLAG_MARK_IN_SYNC,
-                            out _,
-                            nint.Zero);
+                        // IMPORTANT: Must provide FileIdentity for dehydration to work!
+                        // The FileIdentity is the relative path used in FETCH_DATA callback
+                        var relativePath = clientPath.StartsWith(_clientFolder, StringComparison.OrdinalIgnoreCase)
+                            ? clientPath.Substring(_clientFolder.Length).TrimStart(Path.DirectorySeparatorChar)
+                            : Path.GetFileName(clientPath);
 
-                        if (hr >= 0)
+                        var fileIdentityBytes = System.Text.Encoding.Unicode.GetBytes(relativePath + '\0');
+                        var fileIdentityHandle = GCHandle.Alloc(fileIdentityBytes, GCHandleType.Pinned);
+
+                        try
                         {
-                            Trace.WriteLine($"  [InSync] Converted to placeholder: {Path.GetFileName(clientPath)}");
+                            hr = CfApi.CfConvertToPlaceholder(
+                                handle,
+                                fileIdentityHandle.AddrOfPinnedObject(),
+                                (uint)fileIdentityBytes.Length,
+                                CF_CONVERT_FLAGS.CF_CONVERT_FLAG_MARK_IN_SYNC,
+                                out _,
+                                nint.Zero);
+
+                            if (hr >= 0)
+                            {
+                                Trace.WriteLine($"  [InSync] Converted to placeholder: {Path.GetFileName(clientPath)} (identity: {relativePath})");
+                            }
+                            else
+                            {
+                                Trace.WriteLine($"  [InSync] CfConvertToPlaceholder failed: 0x{hr:X8}");
+                            }
                         }
-                        else
+                        finally
                         {
-                            Trace.WriteLine($"  [InSync] CfConvertToPlaceholder failed: 0x{hr:X8}");
+                            fileIdentityHandle.Free();
                         }
                     }
                 }
@@ -659,6 +696,159 @@ namespace Nuvii_Sync.CloudSync
             catch (Exception ex)
             {
                 Trace.WriteLine($"  [InSync] Error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Updates the FileIdentity of a placeholder after rename/move.
+        /// This is critical - without this, hydration will fail because it looks for the old path.
+        /// </summary>
+        private void UpdatePlaceholderIdentity(string clientPath, string newRelativePath)
+        {
+            try
+            {
+                if (!File.Exists(clientPath) && !Directory.Exists(clientPath))
+                    return;
+
+                // Check if it's a placeholder first
+                if (!IsPlaceholder(clientPath))
+                    return;
+
+                uint flags = CfApi.FILE_FLAG_BACKUP_SEMANTICS;
+                nint handle = CfApi.CreateFileW(
+                    clientPath,
+                    CfApi.GENERIC_READ | CfApi.GENERIC_WRITE,
+                    CfApi.FILE_SHARE_READ | CfApi.FILE_SHARE_WRITE | CfApi.FILE_SHARE_DELETE,
+                    nint.Zero,
+                    CfApi.OPEN_EXISTING,
+                    flags,
+                    nint.Zero);
+
+                if (handle == CfApi.INVALID_HANDLE_VALUE)
+                {
+                    Trace.WriteLine($"  [UpdateIdentity] Failed to open handle: {clientPath}");
+                    return;
+                }
+
+                try
+                {
+                    // Build new FileIdentity
+                    var fileIdentityBytes = System.Text.Encoding.Unicode.GetBytes(newRelativePath + '\0');
+                    var fileIdentityHandle = GCHandle.Alloc(fileIdentityBytes, GCHandleType.Pinned);
+
+                    try
+                    {
+                        // Get current file metadata
+                        var fileInfo = new FileInfo(clientPath);
+                        var fsMetadata = new CF_FS_METADATA
+                        {
+                            FileSize = fileInfo.Length,
+                            BasicInfo = new FILE_BASIC_INFO
+                            {
+                                FileAttributes = (uint)fileInfo.Attributes,
+                                CreationTime = fileInfo.CreationTime.ToFileTime(),
+                                LastAccessTime = fileInfo.LastAccessTime.ToFileTime(),
+                                LastWriteTime = fileInfo.LastWriteTime.ToFileTime(),
+                                ChangeTime = fileInfo.LastWriteTime.ToFileTime()
+                            }
+                        };
+
+                        var hr = CfApi.CfUpdatePlaceholder(
+                            handle,
+                            in fsMetadata,
+                            fileIdentityHandle.AddrOfPinnedObject(),
+                            (uint)fileIdentityBytes.Length,
+                            nint.Zero,
+                            0,
+                            CF_UPDATE_FLAGS.CF_UPDATE_FLAG_MARK_IN_SYNC,
+                            out _,
+                            nint.Zero);
+
+                        if (hr >= 0)
+                        {
+                            Trace.WriteLine($"  [UpdateIdentity] Updated: {Path.GetFileName(clientPath)} → identity: {newRelativePath}");
+                        }
+                        else
+                        {
+                            Trace.WriteLine($"  [UpdateIdentity] CfUpdatePlaceholder failed: 0x{hr:X8}");
+                        }
+                    }
+                    finally
+                    {
+                        fileIdentityHandle.Free();
+                    }
+                }
+                finally
+                {
+                    CfApi.CloseHandle(handle);
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"  [UpdateIdentity] Error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Marks a file or folder as NOT in-sync to show sync indicator.
+        /// This causes the shell to display the sync arrows icon.
+        /// Uses FILE_WRITE_ATTRIBUTES to avoid triggering hydration on dehydrated files.
+        /// </summary>
+        private void MarkAsNotInSync(string clientPath)
+        {
+            try
+            {
+                if (!File.Exists(clientPath) && !Directory.Exists(clientPath))
+                    return;
+
+                // Check if it's a placeholder first
+                if (!IsPlaceholder(clientPath))
+                    return;
+
+                // Use FILE_WRITE_ATTRIBUTES instead of GENERIC_WRITE to avoid triggering hydration
+                // Also use FILE_FLAG_OPEN_REPARSE_POINT to handle the placeholder directly
+                uint flags = CfApi.FILE_FLAG_BACKUP_SEMANTICS | CfApi.FILE_FLAG_OPEN_REPARSE_POINT;
+                nint handle = CfApi.CreateFileW(
+                    clientPath,
+                    CfApi.FILE_WRITE_ATTRIBUTES,
+                    CfApi.FILE_SHARE_READ | CfApi.FILE_SHARE_WRITE | CfApi.FILE_SHARE_DELETE,
+                    nint.Zero,
+                    CfApi.OPEN_EXISTING,
+                    flags,
+                    nint.Zero);
+
+                if (handle == CfApi.INVALID_HANDLE_VALUE)
+                {
+                    var lastError = CfApi.GetLastError();
+                    Trace.WriteLine($"  [NotInSync] CreateFileW failed for {Path.GetFileName(clientPath)}: error {lastError}");
+                    return;
+                }
+
+                try
+                {
+                    var hr = CfApi.CfSetInSyncState(
+                        handle,
+                        CF_IN_SYNC_STATE.CF_IN_SYNC_STATE_NOT_IN_SYNC,
+                        CF_SET_IN_SYNC_FLAGS.CF_SET_IN_SYNC_FLAG_NONE,
+                        out _);
+
+                    if (hr >= 0)
+                    {
+                        Trace.WriteLine($"  [NotInSync] Marked for sync: {Path.GetFileName(clientPath)}");
+                    }
+                    else
+                    {
+                        Trace.WriteLine($"  [NotInSync] CfSetInSyncState failed for {Path.GetFileName(clientPath)}: 0x{hr:X8}");
+                    }
+                }
+                finally
+                {
+                    CfApi.CloseHandle(handle);
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"  [NotInSync] Error: {ex.Message}");
             }
         }
 

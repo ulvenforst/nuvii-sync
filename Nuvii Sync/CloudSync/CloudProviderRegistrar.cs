@@ -53,7 +53,8 @@ namespace Nuvii_Sync.CloudSync
                     // HydrationPolicy.Full means files are fully hydrated on first access
                     // This matches the CloudMirror sample behavior
                     HydrationPolicy = StorageProviderHydrationPolicy.Full,
-                    HydrationPolicyModifier = StorageProviderHydrationPolicyModifier.None,
+                    // AutoDehydrationAllowed is required to allow "Free up space" to dehydrate files
+                    HydrationPolicyModifier = StorageProviderHydrationPolicyModifier.AutoDehydrationAllowed,
                     
                     // PopulationPolicy.AlwaysFull means all placeholders are created upfront
                     // (no on-demand population via CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS)

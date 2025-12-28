@@ -70,14 +70,12 @@ namespace Nuvii_Sync.CloudSync
         {
             try
             {
-                // Skip if this is a placeholder-only file (not hydrated)
-                if (IsPlaceholderOnly(e.FullPath))
-                {
-                    Trace.WriteLine($"[ClientSyncWatcher] Skipping placeholder: {e.Name}");
-                    return;
-                }
+                // Check if this is a placeholder-only file (not hydrated)
+                bool isPlaceholder = IsPlaceholderOnly(e.FullPath);
 
-                _syncHandler.OnCreated(e.FullPath);
+                // Always pass to sync handler - it needs to detect moves even for placeholders
+                // The sync handler will skip placeholders that aren't part of a move operation
+                _syncHandler.OnCreated(e.FullPath, isPlaceholder);
             }
             catch (Exception ex)
             {

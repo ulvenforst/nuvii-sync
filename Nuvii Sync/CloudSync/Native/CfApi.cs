@@ -352,12 +352,15 @@ namespace Nuvii_Sync.CloudSync.Native
         // File access constants
         public const uint GENERIC_READ = 0x80000000;
         public const uint GENERIC_WRITE = 0x40000000;
+        public const uint FILE_READ_ATTRIBUTES = 0x00000080;
+        public const uint FILE_WRITE_ATTRIBUTES = 0x00000100;
         public const uint FILE_SHARE_READ = 0x00000001;
         public const uint FILE_SHARE_WRITE = 0x00000002;
         public const uint FILE_SHARE_DELETE = 0x00000004;
         public const uint OPEN_EXISTING = 3;
         public const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
         public const uint FILE_FLAG_OVERLAPPED = 0x40000000;
+        public const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
         public const uint FILE_ATTRIBUTE_NORMAL = 0x80;
         public const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
         public const uint FILE_ATTRIBUTE_PINNED = 0x00080000;

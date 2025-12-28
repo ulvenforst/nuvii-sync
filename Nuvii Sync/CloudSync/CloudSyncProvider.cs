@@ -466,24 +466,45 @@ namespace Nuvii_Sync.CloudSync
             }
 
             // Check placeholder state
+            const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
+            var isReparsePoint = (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
             var placeholderState = CfApi.CfGetPlaceholderStateFromAttributeTag(attributes, CfApi.IO_REPARSE_TAG_CLOUD);
-            Trace.WriteLine($"  [Dehydrate] Placeholder state: {placeholderState}");
+            var isPlaceholder = placeholderState != CF_PLACEHOLDER_STATE.CF_PLACEHOLDER_STATE_INVALID &&
+                               (placeholderState & CF_PLACEHOLDER_STATE.CF_PLACEHOLDER_STATE_PLACEHOLDER) != 0;
+            var isInSync = (placeholderState & CF_PLACEHOLDER_STATE.CF_PLACEHOLDER_STATE_IN_SYNC) != 0;
+
+            Trace.WriteLine($"  [Dehydrate] ReparsePoint={isReparsePoint}, Placeholder={isPlaceholder}, InSync={isInSync}, State={placeholderState}");
+
+            // If it's not a placeholder, we need to convert it first
+            if (!isPlaceholder)
+            {
+                Trace.WriteLine($"  [Dehydrate] File is NOT a placeholder - converting first");
+                ConvertAndDehydrate(path);
+                return;
+            }
 
             // Check if already dehydrated (has OFFLINE attribute = no local data)
             const uint FILE_ATTRIBUTE_OFFLINE = 0x1000;
             if ((attributes & FILE_ATTRIBUTE_OFFLINE) != 0)
             {
                 Trace.WriteLine($"  [Dehydrate] File already dehydrated, just marking in-sync");
-                // Just need to mark in-sync
                 MarkFileInSync(path);
                 return;
             }
 
-            // Use minimal access - CloudMirror uses 0 for access
-            // But CfSetInSyncState needs WRITE_DATA or WRITE_DAC
+            // If not in-sync, we cannot dehydrate - mark in-sync first
+            if (!isInSync)
+            {
+                Trace.WriteLine($"  [Dehydrate] File is NOT in-sync - marking in-sync first");
+                MarkFileInSync(path);
+                // Small delay to let the in-sync state propagate
+                Task.Delay(100).Wait();
+            }
+
+            // Open handle for dehydration - use 0 access like CloudMirror
             var handle = CfApi.CreateFileW(
                 path,
-                CfApi.GENERIC_WRITE, // Need write for CfSetInSyncState
+                0, // No access needed for CfDehydratePlaceholder
                 CfApi.FILE_SHARE_READ | CfApi.FILE_SHARE_WRITE | CfApi.FILE_SHARE_DELETE,
                 nint.Zero,
                 CfApi.OPEN_EXISTING,
@@ -494,25 +515,9 @@ namespace Nuvii_Sync.CloudSync
             {
                 var lastError = CfApi.GetLastError();
                 Trace.WriteLine($"  [Dehydrate] CreateFileW failed, error: {lastError} (0x{lastError:X})");
-
-                // Try with read-only access just for dehydration
-                handle = CfApi.CreateFileW(
-                    path,
-                    0, // No access - sufficient for CfDehydratePlaceholder
-                    CfApi.FILE_SHARE_READ | CfApi.FILE_SHARE_WRITE | CfApi.FILE_SHARE_DELETE,
-                    nint.Zero,
-                    CfApi.OPEN_EXISTING,
-                    CfApi.FILE_FLAG_BACKUP_SEMANTICS,
-                    nint.Zero);
-
-                if (handle == CfApi.INVALID_HANDLE_VALUE)
-                {
-                    lastError = CfApi.GetLastError();
-                    Trace.WriteLine($"  [Dehydrate] CreateFileW (no access) also failed, error: {lastError}");
-                    return;
-                }
-
-                Trace.WriteLine($"  [Dehydrate] Opened with no access, will dehydrate only");
+                // Even if we can't dehydrate, try to mark in-sync to clear the pending state
+                MarkFileInSync(path);
+                return;
             }
 
             try
@@ -520,29 +525,98 @@ namespace Nuvii_Sync.CloudSync
                 var hr = CfApi.CfDehydratePlaceholder(handle, 0, -1, CF_DEHYDRATE_FLAGS.CF_DEHYDRATE_FLAG_NONE, nint.Zero);
                 if (hr < 0)
                 {
+                    // Common errors:
+                    // 0x80070179 = ERROR_CLOUD_FILE_NOT_IN_SYNC
+                    // 0x8007017A = ERROR_CLOUD_FILE_PINNED
+                    // 0x8007017B = ERROR_CLOUD_FILE_NOT_A_CLOUD_FILE
                     Trace.WriteLine($"  [Dehydrate] CfDehydratePlaceholder failed: 0x{hr:X8}");
+
+                    // Close handle before trying to fix
+                    CfApi.CloseHandle(handle);
+                    handle = CfApi.INVALID_HANDLE_VALUE;
+
+                    // If dehydration failed, try to mark in-sync to clear pending state
+                    Trace.WriteLine($"  [Dehydrate] Attempting to mark in-sync to clear pending state");
+                    MarkFileInSync(path);
                     return;
                 }
 
                 Trace.WriteLine($"  [Dehydrate] CfDehydratePlaceholder succeeded");
 
-                // Mark as in-sync after successful dehydration
-                hr = CfApi.CfSetInSyncState(
-                    handle,
-                    CF_IN_SYNC_STATE.CF_IN_SYNC_STATE_IN_SYNC,
-                    CF_SET_IN_SYNC_FLAGS.CF_SET_IN_SYNC_FLAG_NONE,
-                    out _);
+                // Close handle and reopen with write access for SetInSyncState
+                CfApi.CloseHandle(handle);
+                handle = CfApi.INVALID_HANDLE_VALUE;
 
-                if (hr < 0)
-                {
-                    Trace.WriteLine($"  [Dehydrate] CfSetInSyncState failed: 0x{hr:X8}");
-                    // Try reopening with write access for SetInSyncState
+                // Mark as in-sync after successful dehydration
+                MarkFileInSync(path);
+                Trace.WriteLine($"  [Dehydrate] Completed: {Path.GetFileName(path)}");
+            }
+            finally
+            {
+                if (handle != CfApi.INVALID_HANDLE_VALUE)
                     CfApi.CloseHandle(handle);
-                    MarkFileInSync(path);
-                }
-                else
+            }
+        }
+
+        /// <summary>
+        /// Converts a regular file to a placeholder and dehydrates it.
+        /// Used when "Free up space" is clicked on a file that's not yet a placeholder.
+        /// </summary>
+        private static void ConvertAndDehydrate(string path)
+        {
+            var handle = CfApi.CreateFileW(
+                path,
+                CfApi.GENERIC_READ | CfApi.GENERIC_WRITE,
+                CfApi.FILE_SHARE_READ | CfApi.FILE_SHARE_WRITE | CfApi.FILE_SHARE_DELETE,
+                nint.Zero,
+                CfApi.OPEN_EXISTING,
+                CfApi.FILE_FLAG_BACKUP_SEMANTICS,
+                nint.Zero);
+
+            if (handle == CfApi.INVALID_HANDLE_VALUE)
+            {
+                var lastError = CfApi.GetLastError();
+                Trace.WriteLine($"  [ConvertAndDehydrate] CreateFileW failed: {lastError}");
+                return;
+            }
+
+            try
+            {
+                // Build FileIdentity from relative path - required for dehydration to work
+                var relativePath = path.StartsWith(ProviderFolderLocations.ClientFolder, StringComparison.OrdinalIgnoreCase)
+                    ? path.Substring(ProviderFolderLocations.ClientFolder.Length).TrimStart(Path.DirectorySeparatorChar)
+                    : Path.GetFileName(path);
+
+                var fileIdentityBytes = System.Text.Encoding.Unicode.GetBytes(relativePath + '\0');
+                var fileIdentityHandle = System.Runtime.InteropServices.GCHandle.Alloc(fileIdentityBytes, System.Runtime.InteropServices.GCHandleType.Pinned);
+
+                try
                 {
-                    Trace.WriteLine($"  [Dehydrate] Completed: {Path.GetFileName(path)}");
+                    // Convert to placeholder with both MARK_IN_SYNC and DEHYDRATE flags
+                    var hr = CfApi.CfConvertToPlaceholder(
+                        handle,
+                        fileIdentityHandle.AddrOfPinnedObject(),
+                        (uint)fileIdentityBytes.Length,
+                        CF_CONVERT_FLAGS.CF_CONVERT_FLAG_MARK_IN_SYNC | CF_CONVERT_FLAGS.CF_CONVERT_FLAG_DEHYDRATE,
+                        out _,
+                        nint.Zero);
+
+                    if (hr >= 0)
+                    {
+                        Trace.WriteLine($"  [ConvertAndDehydrate] Success: {Path.GetFileName(path)} (identity: {relativePath})");
+                    }
+                    else
+                    {
+                        Trace.WriteLine($"  [ConvertAndDehydrate] CfConvertToPlaceholder failed: 0x{hr:X8}");
+                        // At least try to mark as in-sync
+                        CfApi.CloseHandle(handle);
+                        handle = CfApi.INVALID_HANDLE_VALUE;
+                        MarkFileInSync(path);
+                    }
+                }
+                finally
+                {
+                    fileIdentityHandle.Free();
                 }
             }
             finally
