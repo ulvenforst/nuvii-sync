@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Nuvii Sync (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Nuvii Sync (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

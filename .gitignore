@@ -1,0 +1,23 @@
+# Visual Studio / .NET defaults
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build outputs
+*.log
+*.ide
+*~
+
+# Rider
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Claude tool output
+.claude/

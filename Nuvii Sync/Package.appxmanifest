@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop3="http://schemas.microsoft.com/appx/manifest/desktop/windows10/3"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:cloudfiles2="http://schemas.microsoft.com/appx/manifest/cloudfiles/windows10/2"
+  IgnorableNamespaces="uap rescap desktop3 desktop4 com cloudfiles2">
+
+  <Identity
+    Name="f56bb967-a6af-4a3c-a7ea-a26f6f1d8acb"
+    Publisher="CN=ulven"
+    Version="1.0.0.0" />
+
+  <mp:PhoneIdentity PhoneProductId="f56bb967-a6af-4a3c-a7ea-a26f6f1d8acb" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+
+  <Properties>
+    <DisplayName>Nuvii Sync</DisplayName>
+    <PublisherDisplayName>ulven</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate"/>
+  </Resources>
+
+  <Applications>
+    <Application Id="App"
+      Executable="$targetnametoken$.exe"
+      EntryPoint="$targetentrypoint$">
+      <uap:VisualElements
+        DisplayName="Nuvii Sync"
+        Description="Nuvii Sync"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+      </uap:VisualElements>
+
+      <Extensions>
+        <!-- Cloud Files Extension - Required for cloud sync provider -->
+        <desktop3:Extension Category="windows.cloudFiles">
+          <desktop3:CloudFiles>
+            <!-- Custom State Handler - Shows custom icons/states in File Explorer -->
+            <desktop3:CustomStateHandler Clsid="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F01"/>
+            <!-- Thumbnail Provider - Provides thumbnails for placeholder files -->
+            <desktop3:ThumbnailProviderHandler Clsid="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F02"/>
+            <!-- Extended Property Handler -->
+            <desktop3:ExtendedPropertyHandler Clsid="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F03"/>
+            <!-- Banners Handler (required by schema) -->
+            <desktop3:BannersHandler Clsid="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F03"/>
+            <!-- Status UI Source Factory - Provides status UI in File Explorer -->
+            <cloudfiles2:StorageProviderStatusUISourceFactory Clsid="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F04"/>
+            <!-- Context Menu Commands -->
+            <desktop3:CloudFilesContextMenus>
+              <desktop3:Verb Id="NuviiCommand" Clsid="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F05"/>
+            </desktop3:CloudFilesContextMenus>
+            <!-- Content URI Source -->
+            <desktop4:ContentUriSource Clsid="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F06"/>
+          </desktop3:CloudFiles>
+        </desktop3:Extension>
+
+        <!-- COM Server Registration -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer DisplayName="Nuvii Custom State Handler" Executable="Nuvii Sync.exe">
+              <com:Class Id="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F01"/>
+            </com:ExeServer>
+            <com:ExeServer DisplayName="Nuvii Thumbnail Handler" Executable="Nuvii Sync.exe">
+              <com:Class Id="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F02"/>
+            </com:ExeServer>
+            <com:ExeServer DisplayName="Nuvii Extended Property Handler" Executable="Nuvii Sync.exe">
+              <com:Class Id="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F03"/>
+            </com:ExeServer>
+            <com:ExeServer DisplayName="Nuvii Status UI Source Factory" Executable="Nuvii Sync.exe">
+              <com:Class Id="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F04"/>
+            </com:ExeServer>
+            <com:ExeServer DisplayName="Nuvii Context Menu Handler" Executable="Nuvii Sync.exe">
+              <com:Class Id="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F05"/>
+            </com:ExeServer>
+            <com:ExeServer DisplayName="Nuvii URI Source" Executable="Nuvii Sync.exe">
+              <com:Class Id="7C3B6E67-A8E1-4B1E-9D4F-5A2B3C8E9F06"/>
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient"/>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
