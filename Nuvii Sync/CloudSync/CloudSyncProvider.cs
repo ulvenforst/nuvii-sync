@@ -487,9 +487,8 @@ namespace Nuvii_Sync.CloudSync
             const uint FILE_ATTRIBUTE_OFFLINE = 0x1000;
             if ((attributes & FILE_ATTRIBUTE_OFFLINE) != 0)
             {
-                Trace.WriteLine($"  [Dehydrate] File already dehydrated, just marking in-sync");
-                MarkFileInSync(path);
-                return;
+                Trace.WriteLine($"  [Dehydrate] File already dehydrated, no action needed");
+                return;  // Don't mark in-sync - preserve current sync state
             }
 
             // If not in-sync, we cannot dehydrate - mark in-sync first
@@ -549,6 +548,14 @@ namespace Nuvii_Sync.CloudSync
 
                 // Mark as in-sync after successful dehydration
                 MarkFileInSync(path);
+
+                // Notify shell to refresh parent folder so its state reflects children's states
+                var parentFolder = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(parentFolder))
+                {
+                    NotifyShellOfChange(parentFolder);
+                }
+
                 Trace.WriteLine($"  [Dehydrate] Completed: {Path.GetFileName(path)}");
             }
             finally
@@ -604,6 +611,13 @@ namespace Nuvii_Sync.CloudSync
                     if (hr >= 0)
                     {
                         Trace.WriteLine($"  [ConvertAndDehydrate] Success: {Path.GetFileName(path)} (identity: {relativePath})");
+
+                        // Notify shell to refresh parent folder so its state reflects children's states
+                        var parentFolder = Path.GetDirectoryName(path);
+                        if (!string.IsNullOrEmpty(parentFolder))
+                        {
+                            NotifyShellOfChange(parentFolder);
+                        }
                     }
                     else
                     {
@@ -684,6 +698,18 @@ namespace Nuvii_Sync.CloudSync
             // Notify shell to refresh the folder view
             NotifyShellOfChange(e.Operation.CurrentPath);
 
+            // Skip directories - only show file activity in UI
+            if (e.Operation.IsDirectory)
+            {
+                return;
+            }
+
+            // Skip Modified operations - only show significant actions (Create, Delete, Rename, Move)
+            if (e.Operation.Type == SyncOperationType.Modified)
+            {
+                return;
+            }
+
             // Notify activity for UI
             SyncActivityType activityType;
             if (e.Operation.Type == SyncOperationType.Rename)
@@ -701,7 +727,7 @@ namespace Nuvii_Sync.CloudSync
                 {
                     SyncOperationType.Create => SyncActivityType.Uploaded,
                     SyncOperationType.Delete => SyncActivityType.Deleted,
-                    _ => SyncActivityType.Synced
+                    _ => SyncActivityType.Uploaded // Fallback, shouldn't happen
                 };
             }
             NotifyActivity(e.Operation.CurrentPath, activityType);

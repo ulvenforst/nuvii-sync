@@ -99,7 +99,8 @@ namespace Nuvii_Sync.CloudSync
                         OriginalRelativePath = deletedInfo.RelativePath,
                         Type = SyncOperationType.Rename, // Rename handles both rename and move
                         State = OperationState.Pending,
-                        CreatedAt = DateTime.UtcNow
+                        CreatedAt = DateTime.UtcNow,
+                        IsDirectory = deletedInfo.IsDirectory
                     };
 
                     _pendingOperations.AddOrUpdate(
@@ -134,7 +135,8 @@ namespace Nuvii_Sync.CloudSync
                 RelativePath = relativePath,
                 Type = SyncOperationType.Create,
                 State = OperationState.Pending,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                IsDirectory = Directory.Exists(fullPath)
             };
 
             // Try to add or update existing operation
@@ -182,7 +184,8 @@ namespace Nuvii_Sync.CloudSync
                         RelativePath = newRelativePath,
                         Type = SyncOperationType.Create, // Still a Create, just with different path
                         State = OperationState.Pending,
-                        CreatedAt = existingOp.CreatedAt // Keep original time
+                        CreatedAt = existingOp.CreatedAt, // Keep original time
+                        IsDirectory = existingOp.IsDirectory
                     };
 
                     _pendingOperations.TryAdd(newFullPath, mergedOperation);
@@ -210,7 +213,8 @@ namespace Nuvii_Sync.CloudSync
                 OriginalRelativePath = oldRelativePath,
                 Type = SyncOperationType.Rename,
                 State = OperationState.Pending,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                IsDirectory = Directory.Exists(newFullPath)
             };
 
             _pendingOperations.AddOrUpdate(
@@ -252,6 +256,10 @@ namespace Nuvii_Sync.CloudSync
                 }
             }
 
+            // Determine if this was a directory by checking server (client path no longer exists)
+            var serverPath = Path.Combine(_serverFolder, relativePath);
+            var isDirectory = Directory.Exists(serverPath);
+
             // Track this delete for potential Move detection (Delete + Create = Move)
             // FileSystemWatcher sometimes fires Delete+Create instead of Renamed for cross-directory moves
             var deletedInfo = new DeletedFileInfo
@@ -259,7 +267,8 @@ namespace Nuvii_Sync.CloudSync
                 OriginalPath = fullPath,
                 RelativePath = relativePath,
                 FileName = fileName,
-                DeletedAt = DateTime.UtcNow
+                DeletedAt = DateTime.UtcNow,
+                IsDirectory = isDirectory
             };
             _recentlyDeleted.AddOrUpdate(fileName, deletedInfo, (_, __) => deletedInfo);
 
@@ -273,7 +282,8 @@ namespace Nuvii_Sync.CloudSync
                 RelativePath = relativePath,
                 Type = SyncOperationType.Delete,
                 State = OperationState.Pending,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                IsDirectory = isDirectory
             };
 
             _pendingOperations.TryAdd(fullPath, deleteOperation);
@@ -321,14 +331,15 @@ namespace Nuvii_Sync.CloudSync
                 }
             }
 
-            // Queue modify operation
+            // Queue modify operation (always a file, not directory)
             var modifyOperation = new PendingOperation
             {
                 CurrentPath = fullPath,
                 RelativePath = relativePath,
                 Type = SyncOperationType.Modified,
                 State = OperationState.Pending,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                IsDirectory = false
             };
 
             _pendingOperations.AddOrUpdate(
@@ -958,6 +969,7 @@ namespace Nuvii_Sync.CloudSync
         public DateTime CreatedAt { get; set; }
         public CancellationTokenSource? TimerCts { get; set; }
         public (string OldPath, string NewPath)? PendingRename { get; set; }
+        public bool IsDirectory { get; set; }
     }
 
     /// <summary>
@@ -997,5 +1009,6 @@ namespace Nuvii_Sync.CloudSync
         public string RelativePath { get; set; } = string.Empty;
         public string FileName { get; set; } = string.Empty;
         public DateTime DeletedAt { get; set; }
+        public bool IsDirectory { get; set; }
     }
 }
