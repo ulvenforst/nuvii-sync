@@ -70,6 +70,10 @@ namespace Nuvii_Sync.CloudSync
         {
             try
             {
+                // Filter temporary files (Office ~$, .tmp, etc.) - silently ignore
+                if (TempFileFilter.ShouldIgnore(e.FullPath))
+                    return;
+
                 // Check if this is a placeholder-only file (not hydrated)
                 bool isPlaceholder = IsPlaceholderOnly(e.FullPath);
 
@@ -87,6 +91,31 @@ namespace Nuvii_Sync.CloudSync
         {
             try
             {
+                // Filter temporary files - if BOTH old and new are temp files, ignore completely
+                // If only old is temp (renaming temp to final), let it through
+                // If only new is temp (renaming final to temp), let it through (will be caught as delete of original)
+                bool oldIsTemp = TempFileFilter.ShouldIgnoreByName(e.OldFullPath);
+                bool newIsTemp = TempFileFilter.ShouldIgnore(e.FullPath);
+
+                if (oldIsTemp && newIsTemp)
+                    return;
+
+                // If renaming FROM temp TO real file, treat as a Create of the new file
+                if (oldIsTemp && !newIsTemp)
+                {
+                    bool isPlaceholder = IsPlaceholderOnly(e.FullPath);
+                    _syncHandler.OnCreated(e.FullPath, isPlaceholder);
+                    return;
+                }
+
+                // If renaming FROM real TO temp, treat as a Delete of the original
+                if (!oldIsTemp && newIsTemp)
+                {
+                    _syncHandler.OnDeleted(e.OldFullPath);
+                    return;
+                }
+
+                // Normal rename - neither is temp
                 _syncHandler.OnRenamed(e.OldFullPath, e.FullPath);
             }
             catch (Exception ex)
@@ -99,6 +128,10 @@ namespace Nuvii_Sync.CloudSync
         {
             try
             {
+                // Filter temporary files by name (file no longer exists, can't check attributes)
+                if (TempFileFilter.ShouldIgnoreByName(e.FullPath))
+                    return;
+
                 _syncHandler.OnDeleted(e.FullPath);
             }
             catch (Exception ex)
@@ -113,6 +146,10 @@ namespace Nuvii_Sync.CloudSync
             {
                 // Skip directories - they don't have content changes
                 if (Directory.Exists(e.FullPath)) return;
+
+                // Filter temporary files - silently ignore
+                if (TempFileFilter.ShouldIgnore(e.FullPath))
+                    return;
 
                 // Skip if this is a placeholder-only file
                 if (IsPlaceholderOnly(e.FullPath))

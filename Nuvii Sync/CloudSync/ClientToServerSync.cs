@@ -31,6 +31,7 @@ namespace Nuvii_Sync.CloudSync
         private readonly ConcurrentDictionary<string, PendingOperation> _pendingOperations =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly TimeSpan _debounceDelay;
+        private readonly TimeSpan _deleteDebounceDelay;
         private readonly int _maxRetries;
 
         // Track recently deleted files to detect Move operations (Delete + Create = Move)
@@ -61,16 +62,20 @@ namespace Nuvii_Sync.CloudSync
         /// <param name="clientFolder">The sync root folder on the client</param>
         /// <param name="serverFolder">The server folder to sync to</param>
         /// <param name="debounceDelayMs">Delay in ms before syncing (default: 3000ms)</param>
+        /// <param name="deleteDebounceDelayMs">Delay in ms before syncing deletes (default: 7000ms).
+        /// Longer to handle Office atomic save patterns (delete + rename).</param>
         /// <param name="maxRetries">Maximum retry attempts for failed operations (default: 3)</param>
         public ClientToServerSync(
             string clientFolder,
             string serverFolder,
             int debounceDelayMs = 3000,
+            int deleteDebounceDelayMs = 7000,
             int maxRetries = 3)
         {
             _clientFolder = clientFolder;
             _serverFolder = serverFolder;
             _debounceDelay = TimeSpan.FromMilliseconds(debounceDelayMs);
+            _deleteDebounceDelay = TimeSpan.FromMilliseconds(deleteDebounceDelayMs);
             _maxRetries = maxRetries;
         }
 
@@ -98,14 +103,51 @@ namespace Nuvii_Sync.CloudSync
                 // Check if the delete was recent enough
                 if (DateTime.UtcNow - deletedInfo.DeletedAt <= _moveDetectionWindow)
                 {
-                    // This is a Move! Cancel the pending Delete and create a Rename operation
-                    Trace.WriteLine($"  Detected MOVE: {deletedInfo.RelativePath} → {relativePath}");
-
                     // Cancel the pending Delete operation for the SOURCE
                     if (_pendingOperations.TryRemove(deletedInfo.OriginalPath, out var pendingDelete))
                     {
                         CancelTimer(pendingDelete);
                     }
+
+                    // Check if this is an ATOMIC SAVE (Delete + Create at SAME path)
+                    // Office apps do this: delete original → rename temp → file appears at same path
+                    // This is NOT a move, it's a Modified operation
+                    bool isSamePath = string.Equals(deletedInfo.RelativePath, relativePath, StringComparison.OrdinalIgnoreCase);
+
+                    if (isSamePath)
+                    {
+                        // This is an atomic save (Modified), not a Move
+                        Trace.WriteLine($"  Detected ATOMIC SAVE (Modified): {relativePath}");
+
+                        // Don't mark as not-in-sync here - let the Modified operation handle it
+                        var modifyOperation = new PendingOperation
+                        {
+                            CurrentPath = fullPath,
+                            RelativePath = relativePath,
+                            Type = SyncOperationType.Modified,
+                            State = OperationState.Pending,
+                            CreatedAt = DateTime.UtcNow,
+                            IsDirectory = false // Atomic saves are always files
+                        };
+
+                        _pendingOperations.AddOrUpdate(
+                            fullPath,
+                            _ =>
+                            {
+                                StartDebounceTimer(modifyOperation);
+                                return modifyOperation;
+                            },
+                            (_, existing) =>
+                            {
+                                CancelTimer(existing);
+                                StartDebounceTimer(modifyOperation);
+                                return modifyOperation;
+                            });
+                        return;
+                    }
+
+                    // This is a real Move! Create a Rename operation
+                    Trace.WriteLine($"  Detected MOVE: {deletedInfo.RelativePath} → {relativePath}");
 
                     // Also cancel any pending Delete at the DESTINATION (handles Replace scenarios)
                     // When user replaces a file, Windows sends: Delete(dest) + Delete(src) + Create(dest)
@@ -378,11 +420,16 @@ namespace Nuvii_Sync.CloudSync
             operation.TimerCts = new CancellationTokenSource();
             var token = operation.TimerCts.Token;
 
+            // Use longer delay for Delete operations to handle Office atomic saves
+            var delay = operation.Type == SyncOperationType.Delete
+                ? _deleteDebounceDelay
+                : _debounceDelay;
+
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await Task.Delay(_debounceDelay, token);
+                    await Task.Delay(delay, token);
 
                     if (!token.IsCancellationRequested)
                     {
@@ -660,8 +707,33 @@ namespace Nuvii_Sync.CloudSync
         /// Automatically detects if file is already a placeholder:
         /// - Regular files: Converts to placeholder with in-sync flag (CfConvertToPlaceholder)
         /// - Existing placeholders: Updates in-sync state (CfSetInSyncState)
+        /// Includes retry logic for when the file is locked by another application.
         /// </summary>
         private void MarkAsInSync(string clientPath)
+        {
+            const int maxRetries = 5;
+            const int retryDelayMs = 500;
+
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            {
+                if (TryMarkAsInSyncInternal(clientPath))
+                    return;
+
+                if (attempt < maxRetries)
+                {
+                    Trace.WriteLine($"  [InSync] Retry {attempt}/{maxRetries} in {retryDelayMs}ms: {Path.GetFileName(clientPath)}");
+                    Thread.Sleep(retryDelayMs);
+                }
+            }
+
+            Trace.WriteLine($"  [InSync] Failed after {maxRetries} attempts: {Path.GetFileName(clientPath)}");
+        }
+
+        /// <summary>
+        /// Internal method that attempts to mark a file as in-sync.
+        /// Returns true on success, false if should retry.
+        /// </summary>
+        private bool TryMarkAsInSyncInternal(string clientPath)
         {
             try
             {
@@ -669,7 +741,7 @@ namespace Nuvii_Sync.CloudSync
                 if (!isDirectory && !File.Exists(clientPath))
                 {
                     Trace.WriteLine($"  [InSync] File no longer exists: {clientPath}");
-                    return;
+                    return true; // Don't retry if file doesn't exist
                 }
 
                 // Check if file is already a placeholder using attributes
@@ -688,8 +760,8 @@ namespace Nuvii_Sync.CloudSync
 
                 if (handle == CfApi.INVALID_HANDLE_VALUE)
                 {
-                    Trace.WriteLine($"  [InSync] Failed to open handle: {clientPath}");
-                    return;
+                    Trace.WriteLine($"  [InSync] Failed to open handle: {Path.GetFileName(clientPath)}");
+                    return false; // Retry
                 }
 
                 try
@@ -748,6 +820,8 @@ namespace Nuvii_Sync.CloudSync
                             fileIdentityHandle.Free();
                         }
                     }
+
+                    return true; // Success
                 }
                 finally
                 {
@@ -757,6 +831,7 @@ namespace Nuvii_Sync.CloudSync
             catch (Exception ex)
             {
                 Trace.WriteLine($"  [InSync] Error: {ex.Message}");
+                return false; // Retry on exception
             }
         }
 
