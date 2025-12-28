@@ -84,9 +84,15 @@ namespace Nuvii_Sync
             _settingsWindow?.Hide();
         }
 
-        public void QuitApplication()
+        public async void QuitApplication()
         {
             _isQuitting = true;
+
+            // Stop sync service if running
+            if (SyncService.Instance.IsRunning)
+            {
+                await SyncService.Instance.StopAsync();
+            }
 
             // Dispose tray icon first to remove it from system tray
             _trayIcon?.Dispose();

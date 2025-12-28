@@ -161,6 +161,30 @@ namespace Nuvii_Sync.Views
             }
         }
 
+        private void FolderLink_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Microsoft.UI.Xaml.Controls.HyperlinkButton button &&
+                button.DataContext is SyncActivityItem item)
+            {
+                var folderPath = item.FolderFullPath;
+
+                // If folder was renamed/deleted, try to open sync root instead
+                if (string.IsNullOrEmpty(folderPath) || !System.IO.Directory.Exists(folderPath))
+                {
+                    folderPath = _viewModel.SyncRootFolder;
+                }
+
+                if (!string.IsNullOrEmpty(folderPath) && System.IO.Directory.Exists(folderPath))
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start("explorer.exe", folderPath);
+                    }
+                    catch { }
+                }
+            }
+        }
+
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
             SettingsRequested?.Invoke(this, EventArgs.Empty);

@@ -13,6 +13,11 @@ namespace Nuvii_Sync.Models
         public SyncActivityType ActivityType { get; set; }
         public DateTime Timestamp { get; set; }
 
+        /// <summary>
+        /// Full path to the parent folder (for opening in Explorer).
+        /// </summary>
+        public string FolderFullPath => System.IO.Path.GetDirectoryName(FullPath) ?? string.Empty;
+
         public string Icon => ActivityType switch
         {
             SyncActivityType.Uploaded => "\uE898",      // Upload icon
