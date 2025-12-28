@@ -760,6 +760,12 @@ namespace Nuvii_Sync.CloudSync
                 var relativePath = GetRelativePath(serverPath, ProviderFolderLocations.ServerFolder);
                 var clientPath = Path.Combine(ProviderFolderLocations.ClientFolder, relativePath);
 
+                // Check if this event should be suppressed (caused by our own operation)
+                if (_clientToServerSync?.IsServerEventSuppressed(relativePath) == true)
+                {
+                    return;
+                }
+
                 Trace.WriteLine($"[Server->Client] Creating placeholder: {relativePath}");
 
                 // Use Placeholders.CreateSingle which handles both files and directories
@@ -789,6 +795,12 @@ namespace Nuvii_Sync.CloudSync
                 var relativePath = GetRelativePath(serverPath, ProviderFolderLocations.ServerFolder);
                 var clientPath = Path.Combine(ProviderFolderLocations.ClientFolder, relativePath);
 
+                // Check if this event should be suppressed (caused by our own operation)
+                if (_clientToServerSync?.IsServerEventSuppressed(relativePath) == true)
+                {
+                    return;
+                }
+
                 Trace.WriteLine($"[Server->Client] Deleting placeholder: {relativePath}");
 
                 // Note: In production, activity notification will come from SignalR handler
@@ -815,6 +827,13 @@ namespace Nuvii_Sync.CloudSync
             {
                 var oldRelativePath = GetRelativePath(e.OldFullPath, ProviderFolderLocations.ServerFolder);
                 var newRelativePath = GetRelativePath(e.FullPath, ProviderFolderLocations.ServerFolder);
+
+                // Check if this event should be suppressed (caused by our own operation)
+                if (_clientToServerSync?.IsServerEventSuppressed(oldRelativePath) == true ||
+                    _clientToServerSync?.IsServerEventSuppressed(newRelativePath) == true)
+                {
+                    return;
+                }
 
                 var oldClientPath = Path.Combine(ProviderFolderLocations.ClientFolder, oldRelativePath);
                 var newClientPath = Path.Combine(ProviderFolderLocations.ClientFolder, newRelativePath);

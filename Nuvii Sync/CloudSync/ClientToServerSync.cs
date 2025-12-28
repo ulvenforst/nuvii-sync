@@ -34,6 +34,11 @@ namespace Nuvii_Sync.CloudSync
         private readonly ConcurrentDictionary<string, DeletedFileInfo> _recentlyDeleted = new();
         private readonly TimeSpan _moveDetectionWindow = TimeSpan.FromSeconds(5);
 
+        // Track paths that should be suppressed from server-to-client sync
+        // This prevents feedback loops when our operations trigger server file events
+        private readonly ConcurrentDictionary<string, DateTime> _suppressedPaths = new();
+        private readonly TimeSpan _suppressionDuration = TimeSpan.FromSeconds(5);
+
         private bool _disposed;
 
         public event EventHandler<SyncEventArgs>? OperationCompleted;
@@ -81,10 +86,19 @@ namespace Nuvii_Sync.CloudSync
                     // This is a Move! Cancel the pending Delete and create a Rename operation
                     Trace.WriteLine($"  Detected MOVE: {deletedInfo.RelativePath} → {relativePath}");
 
-                    // Cancel the pending Delete operation
+                    // Cancel the pending Delete operation for the SOURCE
                     if (_pendingOperations.TryRemove(deletedInfo.OriginalPath, out var pendingDelete))
                     {
                         CancelTimer(pendingDelete);
+                    }
+
+                    // Also cancel any pending Delete at the DESTINATION (handles Replace scenarios)
+                    // When user replaces a file, Windows sends: Delete(dest) + Delete(src) + Create(dest)
+                    // The Move will use overwrite:true, so the destination Delete is no longer needed
+                    if (_pendingOperations.TryRemove(fullPath, out var pendingDestDelete))
+                    {
+                        CancelTimer(pendingDestDelete);
+                        Trace.WriteLine($"  Cancelled pending Delete at destination (Replace detected)");
                     }
 
                     // Mark as not-in-sync to show sync indicator (blue arrows)
@@ -404,6 +418,15 @@ namespace Nuvii_Sync.CloudSync
 
             operation.State = OperationState.InProgress;
             Trace.WriteLine($"[Client→Server] Executing: {operation.Type} {operation.RelativePath}");
+
+            // Suppress server events for paths we're about to modify
+            // This prevents feedback loops from our own file operations
+            SuppressServerEvents(operation.RelativePath);
+            if (operation.Type == SyncOperationType.Rename && !string.IsNullOrEmpty(operation.OriginalRelativePath))
+            {
+                // For rename/move, suppress both source and destination
+                SuppressServerEvents(operation.OriginalRelativePath);
+            }
 
             var retryCount = 0;
             Exception? lastException = null;
@@ -902,6 +925,49 @@ namespace Nuvii_Sync.CloudSync
             }
             return Path.GetFileName(fullPath);
         }
+
+        #region Server Event Suppression
+
+        /// <summary>
+        /// Suppresses server-to-client sync events for a path.
+        /// Used to prevent feedback loops when our operations trigger server file events.
+        /// </summary>
+        private void SuppressServerEvents(string relativePath)
+        {
+            var expiresAt = DateTime.UtcNow + _suppressionDuration;
+            _suppressedPaths.AddOrUpdate(relativePath, expiresAt, (_, __) => expiresAt);
+            Trace.WriteLine($"  [Suppress] Added: {relativePath}");
+        }
+
+        /// <summary>
+        /// Checks if server events for a path should be suppressed.
+        /// Called by CloudSyncProvider before reacting to server file events.
+        /// </summary>
+        public bool IsServerEventSuppressed(string relativePath)
+        {
+            // Clean up expired entries
+            var now = DateTime.UtcNow;
+            var expired = _suppressedPaths.Where(kvp => kvp.Value < now).Select(kvp => kvp.Key).ToList();
+            foreach (var key in expired)
+            {
+                _suppressedPaths.TryRemove(key, out _);
+            }
+
+            // Check if path is suppressed
+            if (_suppressedPaths.TryGetValue(relativePath, out var expiresAt))
+            {
+                if (now < expiresAt)
+                {
+                    Trace.WriteLine($"  [Suppress] Blocking server event for: {relativePath}");
+                    return true;
+                }
+                _suppressedPaths.TryRemove(relativePath, out _);
+            }
+
+            return false;
+        }
+
+        #endregion
 
         /// <summary>
         /// Gets the count of pending operations.
