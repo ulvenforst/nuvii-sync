@@ -23,6 +23,8 @@ namespace Nuvii_Sync.CloudSync
     /// </summary>
     public sealed class ClientToServerSync : IDisposable
     {
+        #region Fields
+
         private readonly string _clientFolder;
         private readonly string _serverFolder;
         // Use case-insensitive comparison for paths (Windows is case-insensitive)
@@ -49,6 +51,10 @@ namespace Nuvii_Sync.CloudSync
         public event EventHandler<SyncEventArgs>? OperationCompleted;
         public event EventHandler<SyncErrorEventArgs>? OperationFailed;
 
+        #endregion
+
+        #region Constructor
+
         /// <summary>
         /// Creates a new ClientToServerSync instance.
         /// </summary>
@@ -67,6 +73,10 @@ namespace Nuvii_Sync.CloudSync
             _debounceDelay = TimeSpan.FromMilliseconds(debounceDelayMs);
             _maxRetries = maxRetries;
         }
+
+        #endregion
+
+        #region Public Event Handlers
 
         /// <summary>
         /// Called when a file or folder is created in the client folder.
@@ -213,10 +223,10 @@ namespace Nuvii_Sync.CloudSync
                 }
                 else if (existingOp.State == OperationState.InProgress)
                 {
-                    // Create is in progress, need to queue a rename after it completes
-                    Trace.WriteLine($"  Create in progress, queueing rename");
-                    QueueRenameAfterCreate(existingOp, oldFullPath, newFullPath);
-                    return;
+                    // Create is in progress - the file will be created with the old name on server
+                    // Queue a rename operation to fix it after the create completes
+                    Trace.WriteLine($"  Create in progress, queueing separate rename operation");
+                    // Fall through to create a standalone rename operation
                 }
             }
 
@@ -310,23 +320,6 @@ namespace Nuvii_Sync.CloudSync
         }
 
         /// <summary>
-        /// Removes old entries from the recently deleted tracking dictionary.
-        /// </summary>
-        private void CleanupOldDeletedEntries()
-        {
-            var cutoff = DateTime.UtcNow - _moveDetectionWindow - TimeSpan.FromSeconds(5);
-            var toRemove = _recentlyDeleted
-                .Where(kvp => kvp.Value.DeletedAt < cutoff)
-                .Select(kvp => kvp.Key)
-                .ToList();
-
-            foreach (var key in toRemove)
-            {
-                _recentlyDeleted.TryRemove(key, out _);
-            }
-        }
-
-        /// <summary>
         /// Called when a file is modified in the client folder.
         /// </summary>
         public void OnModified(string fullPath)
@@ -376,6 +369,10 @@ namespace Nuvii_Sync.CloudSync
                 });
         }
 
+        #endregion
+
+        #region Debounce & Timer Management
+
         private void StartDebounceTimer(PendingOperation operation)
         {
             operation.TimerCts = new CancellationTokenSource();
@@ -416,6 +413,10 @@ namespace Nuvii_Sync.CloudSync
                 // Ignore cancellation errors
             }
         }
+
+        #endregion
+
+        #region Operation Execution
 
         private async Task ExecuteOperationAsync(PendingOperation operation)
         {
@@ -506,12 +507,7 @@ namespace Nuvii_Sync.CloudSync
             }
             else
             {
-                // Create parent directory if needed
-                var parentDir = Path.GetDirectoryName(serverPath);
-                if (!string.IsNullOrEmpty(parentDir))
-                {
-                    Directory.CreateDirectory(parentDir);
-                }
+                EnsureParentDirectory(serverPath);
 
                 // Copy file to server
                 File.Copy(clientPath, serverPath, overwrite: true);
@@ -546,12 +542,7 @@ namespace Nuvii_Sync.CloudSync
                 return ExecuteCreateAsync(operation);
             }
 
-            // Create parent directory if needed
-            var parentDir = Path.GetDirectoryName(newServerPath);
-            if (!string.IsNullOrEmpty(parentDir))
-            {
-                Directory.CreateDirectory(parentDir);
-            }
+            EnsureParentDirectory(newServerPath);
 
             if (isDirectory)
             {
@@ -607,12 +598,7 @@ namespace Nuvii_Sync.CloudSync
                 return Task.CompletedTask;
             }
 
-            // Create parent directory if needed
-            var parentDir = Path.GetDirectoryName(serverPath);
-            if (!string.IsNullOrEmpty(parentDir))
-            {
-                Directory.CreateDirectory(parentDir);
-            }
+            EnsureParentDirectory(serverPath);
 
             // Copy updated file to server
             File.Copy(clientPath, serverPath, overwrite: true);
@@ -624,12 +610,45 @@ namespace Nuvii_Sync.CloudSync
             return Task.CompletedTask;
         }
 
-        private void QueueRenameAfterCreate(PendingOperation createOp, string oldPath, string newPath)
+        #endregion
+
+        #region Private Helpers
+
+        private string GetRelativePath(string fullPath)
         {
-            // This handles the edge case where a Create is in progress when a Rename arrives
-            // We need to wait for Create to complete, then execute the Rename
-            createOp.PendingRename = (oldPath, newPath);
+            if (fullPath.StartsWith(_clientFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                return fullPath.Substring(_clientFolder.Length).TrimStart(Path.DirectorySeparatorChar);
+            }
+            return Path.GetFileName(fullPath);
         }
+
+        private static void EnsureParentDirectory(string path)
+        {
+            var parentDir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(parentDir))
+            {
+                Directory.CreateDirectory(parentDir);
+            }
+        }
+
+        private void CleanupOldDeletedEntries()
+        {
+            var cutoff = DateTime.UtcNow - _moveDetectionWindow - TimeSpan.FromSeconds(5);
+            var toRemove = _recentlyDeleted
+                .Where(kvp => kvp.Value.DeletedAt < cutoff)
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            foreach (var key in toRemove)
+            {
+                _recentlyDeleted.TryRemove(key, out _);
+            }
+        }
+
+        #endregion
+
+        #region Placeholder State Management
 
         /// <summary>
         /// Marks a file or folder as synced (in-sync) after successful sync to server.
@@ -695,9 +714,7 @@ namespace Nuvii_Sync.CloudSync
                         // Regular file: Convert to placeholder with in-sync flag
                         // IMPORTANT: Must provide FileIdentity for dehydration to work!
                         // The FileIdentity is the relative path used in FETCH_DATA callback
-                        var relativePath = clientPath.StartsWith(_clientFolder, StringComparison.OrdinalIgnoreCase)
-                            ? clientPath.Substring(_clientFolder.Length).TrimStart(Path.DirectorySeparatorChar)
-                            : Path.GetFileName(clientPath);
+                        var relativePath = GetRelativePath(clientPath);
 
                         var fileIdentityBytes = System.Text.Encoding.Unicode.GetBytes(relativePath + '\0');
                         var fileIdentityHandle = GCHandle.Alloc(fileIdentityBytes, GCHandleType.Pinned);
@@ -922,14 +939,7 @@ namespace Nuvii_Sync.CloudSync
             }
         }
 
-        private string GetRelativePath(string fullPath)
-        {
-            if (fullPath.StartsWith(_clientFolder, StringComparison.OrdinalIgnoreCase))
-            {
-                return fullPath.Substring(_clientFolder.Length).TrimStart(Path.DirectorySeparatorChar);
-            }
-            return Path.GetFileName(fullPath);
-        }
+        #endregion
 
         #region Server Event Suppression
 
@@ -974,6 +984,8 @@ namespace Nuvii_Sync.CloudSync
 
         #endregion
 
+        #region Public API & Disposal
+
         /// <summary>
         /// Gets the count of pending operations.
         /// </summary>
@@ -1002,84 +1014,7 @@ namespace Nuvii_Sync.CloudSync
             }
             _pendingOperations.Clear();
         }
-    }
 
-    /// <summary>
-    /// Types of sync operations.
-    /// </summary>
-    public enum SyncOperationType
-    {
-        Create,
-        Rename,
-        Delete,
-        Modified
-    }
-
-    /// <summary>
-    /// States of a sync operation.
-    /// </summary>
-    public enum OperationState
-    {
-        Pending,
-        InProgress,
-        Completed,
-        Failed
-    }
-
-    /// <summary>
-    /// Represents a pending sync operation.
-    /// </summary>
-    public class PendingOperation
-    {
-        public required string CurrentPath { get; set; }
-        public string? OriginalPath { get; set; }
-        public required string RelativePath { get; set; }
-        public string? OriginalRelativePath { get; set; }
-        public SyncOperationType Type { get; set; }
-        public OperationState State { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public CancellationTokenSource? TimerCts { get; set; }
-        public (string OldPath, string NewPath)? PendingRename { get; set; }
-        public bool IsDirectory { get; set; }
-    }
-
-    /// <summary>
-    /// Event args for completed sync operations.
-    /// </summary>
-    public class SyncEventArgs : EventArgs
-    {
-        public PendingOperation Operation { get; }
-
-        public SyncEventArgs(PendingOperation operation)
-        {
-            Operation = operation;
-        }
-    }
-
-    /// <summary>
-    /// Event args for failed sync operations.
-    /// </summary>
-    public class SyncErrorEventArgs : SyncEventArgs
-    {
-        public Exception? Exception { get; }
-
-        public SyncErrorEventArgs(PendingOperation operation, Exception? exception)
-            : base(operation)
-        {
-            Exception = exception;
-        }
-    }
-
-    /// <summary>
-    /// Tracks information about a recently deleted file for Move detection.
-    /// Used to convert Delete+Create sequences into Move operations.
-    /// </summary>
-    internal class DeletedFileInfo
-    {
-        public string OriginalPath { get; set; } = string.Empty;
-        public string RelativePath { get; set; } = string.Empty;
-        public string FileName { get; set; } = string.Empty;
-        public DateTime DeletedAt { get; set; }
-        public bool IsDirectory { get; set; }
+        #endregion
     }
 }
