@@ -38,8 +38,14 @@ namespace Nuvii_Sync.Views
 
         private void ConfigureWindow()
         {
-            // Set window size (OneDrive-like compact size)
-            _appWindow.Resize(new Windows.Graphics.SizeInt32(380, 450));
+            // Get DPI scale factor
+            var dpi = GetDpiForWindow(_hWnd);
+            var scaleFactor = dpi / 96.0;
+
+            // Set window size (OneDrive-like compact size) - scaled for DPI
+            var width = (int)(380 * scaleFactor);
+            var height = (int)(450 * scaleFactor);
+            _appWindow.Resize(new Windows.Graphics.SizeInt32(width, height));
 
             // Remove title bar for cleaner look
             if (_appWindow.Presenter is OverlappedPresenter presenter)
@@ -68,17 +74,21 @@ namespace Nuvii_Sync.Views
 
         public void ShowAtTrayPosition()
         {
+            // Get DPI scale factor
+            var dpi = GetDpiForWindow(_hWnd);
+            var scaleFactor = dpi / 96.0;
+
             // Get cursor position (where user clicked the tray icon)
             GetCursorPos(out POINT cursorPos);
 
             // Get screen work area (excludes taskbar)
             var workArea = GetWorkArea();
 
-            // Window dimensions
-            const int windowWidth = 380;
-            const int windowHeight = 450;
-            const int marginX = 8;
-            const int marginBottom = 12; // Extra margin above taskbar
+            // Window dimensions (scaled for DPI)
+            var windowWidth = (int)(380 * scaleFactor);
+            var windowHeight = (int)(450 * scaleFactor);
+            var marginX = (int)(8 * scaleFactor);
+            var marginBottom = (int)(12 * scaleFactor);
 
             // Calculate X position - center on cursor, but keep within work area
             var x = cursorPos.X - (windowWidth / 2);
@@ -91,6 +101,7 @@ namespace Nuvii_Sync.Views
             var y = workArea.Bottom - windowHeight - marginBottom;
 
             _appWindow.Move(new Windows.Graphics.PointInt32(x, y));
+            _appWindow.Resize(new Windows.Graphics.SizeInt32(windowWidth, windowHeight));
             _appWindow.Show();
             SetForegroundWindow(_hWnd);
         }
@@ -114,9 +125,9 @@ namespace Nuvii_Sync.Views
             _viewModel.SyncRootFolder = folderPath;
         }
 
-        public void AddActivity(string fileName, string folderPath, SyncActivityType activityType)
+        public void AddActivity(string fileName, string folderPath, string fullPath, SyncActivityType activityType)
         {
-            _viewModel.AddActivity(fileName, folderPath, activityType);
+            _viewModel.AddActivity(fileName, folderPath, fullPath, activityType);
             UpdateActivityVisibility();
         }
 
@@ -140,6 +151,14 @@ namespace Nuvii_Sync.Views
         private void ViewOnlineButton_Click(object sender, RoutedEventArgs e)
         {
             _viewModel.ViewOnlineCommand.Execute(null);
+        }
+
+        private void ActivityListView_ItemClick(object sender, Microsoft.UI.Xaml.Controls.ItemClickEventArgs e)
+        {
+            if (e.ClickedItem is SyncActivityItem item && item.IsClickable)
+            {
+                _viewModel.OpenFile(item);
+            }
         }
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
@@ -182,6 +201,9 @@ namespace Nuvii_Sync.Views
 
         [DllImport("user32.dll")]
         private static extern bool GetCursorPos(out POINT lpPoint);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(nint hwnd);
 
         [DllImport("user32.dll")]
         private static extern bool SystemParametersInfo(int uiAction, int uiParam, ref RECT pvParam, int fWinIni);

@@ -9,6 +9,7 @@ namespace Nuvii_Sync.Models
     {
         public string FileName { get; set; } = string.Empty;
         public string FolderPath { get; set; } = string.Empty;
+        public string FullPath { get; set; } = string.Empty;
         public SyncActivityType ActivityType { get; set; }
         public DateTime Timestamp { get; set; }
 
@@ -32,17 +33,32 @@ namespace Nuvii_Sync.Models
             _ => "Modificado en"
         };
 
-        public string TimeAgo
+        /// <summary>
+        /// Formatted timestamp - shows time for today, date for older.
+        /// </summary>
+        public string FormattedTime
         {
             get
             {
-                var span = DateTime.Now - Timestamp;
-                if (span.TotalMinutes < 1) return "Ahora mismo";
-                if (span.TotalMinutes < 60) return $"Hace {(int)span.TotalMinutes} min";
-                if (span.TotalHours < 24) return $"Hace {(int)span.TotalHours} hora{((int)span.TotalHours > 1 ? "s" : "")}";
-                return $"Hace {(int)span.TotalDays} día{((int)span.TotalDays > 1 ? "s" : "")}";
+                var today = DateTime.Today;
+                if (Timestamp.Date == today)
+                    return Timestamp.ToString("HH:mm");
+                if (Timestamp.Date == today.AddDays(-1))
+                    return $"Ayer {Timestamp:HH:mm}";
+                return Timestamp.ToString("dd/MM HH:mm");
             }
         }
+
+        /// <summary>
+        /// Whether this item can be clicked to open the file.
+        /// Deleted files cannot be opened.
+        /// </summary>
+        public bool IsClickable => ActivityType != SyncActivityType.Deleted;
+
+        /// <summary>
+        /// Opacity for the text - muted for deleted items.
+        /// </summary>
+        public double TextOpacity => ActivityType == SyncActivityType.Deleted ? 0.5 : 1.0;
     }
 
     public enum SyncActivityType

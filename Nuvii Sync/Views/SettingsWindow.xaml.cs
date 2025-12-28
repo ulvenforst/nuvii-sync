@@ -26,7 +26,13 @@ namespace Nuvii_Sync.Views
             _appWindow = AppWindow.GetFromWindowId(windowId);
 
             _appWindow.Title = "Nuvii Sync - Configuración";
-            _appWindow.Resize(new Windows.Graphics.SizeInt32(860, 600));
+
+            // Get DPI scale factor and resize accordingly
+            var dpi = GetDpiForWindow(_hWnd);
+            var scaleFactor = dpi / 96.0;
+            var width = (int)(860 * scaleFactor);
+            var height = (int)(600 * scaleFactor);
+            _appWindow.Resize(new Windows.Graphics.SizeInt32(width, height));
 
             // Hide the default system title bar
             ExtendsContentIntoTitleBar = true;
@@ -130,6 +136,9 @@ namespace Nuvii_Sync.Views
 
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(nint hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(nint hwnd);
         #endregion
     }
 }

@@ -35,6 +35,7 @@ namespace Nuvii_Sync.Views.Pages
 
             // Subscribe to sync service events
             SyncService.StatusChanged += SyncService_StatusChanged;
+            SyncService.ActivityOccurred += SyncService_ActivityOccurred;
 
             LoadSavedPaths();
             CheckExistingRegistration();
@@ -55,6 +56,7 @@ namespace Nuvii_Sync.Views.Pages
 
             // Unsubscribe from service events (but don't dispose the singleton)
             SyncService.StatusChanged -= SyncService_StatusChanged;
+            SyncService.ActivityOccurred -= SyncService_ActivityOccurred;
         }
 
         private void CheckExistingRegistration()
@@ -221,6 +223,14 @@ namespace Nuvii_Sync.Views.Pages
                 // Update tray popup status
                 var isSyncing = status.Contains("Sincronizando") || status.Contains("Inicializando");
                 App.Current.UpdateSyncStatus(status, isSyncing);
+            });
+        }
+
+        private void SyncService_ActivityOccurred(object? sender, SyncActivityEventArgs e)
+        {
+            _dispatcherQueue.TryEnqueue(() =>
+            {
+                App.Current.AddSyncActivity(e.FileName, e.FolderName, e.FullPath, e.ActivityType);
             });
         }
 

@@ -112,12 +112,13 @@ namespace Nuvii_Sync.ViewModels
             StatusIcon = "\uE783"; // Error icon
         }
 
-        public void AddActivity(string fileName, string folderPath, SyncActivityType activityType)
+        public void AddActivity(string fileName, string folderPath, string fullPath, SyncActivityType activityType)
         {
             var item = new SyncActivityItem
             {
                 FileName = fileName,
                 FolderPath = folderPath,
+                FullPath = fullPath,
                 ActivityType = activityType,
                 Timestamp = DateTime.Now
             };
@@ -135,6 +136,30 @@ namespace Nuvii_Sync.ViewModels
         public void ClearActivity()
         {
             RecentActivity.Clear();
+        }
+
+        public void OpenFile(SyncActivityItem? item)
+        {
+            if (item == null || string.IsNullOrEmpty(item.FullPath)) return;
+
+            // Don't try to open deleted files
+            if (item.ActivityType == SyncActivityType.Deleted) return;
+
+            try
+            {
+                if (System.IO.File.Exists(item.FullPath))
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = item.FullPath,
+                        UseShellExecute = true
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error opening file: {ex.Message}");
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Nuvii_Sync.CloudSync.Native;
 using Nuvii_Sync.CloudSync.ShellServices;
+using Nuvii_Sync.Models;
 using Trace = System.Diagnostics.Trace;
 
 namespace Nuvii_Sync.CloudSync
@@ -38,6 +39,7 @@ namespace Nuvii_Sync.CloudSync
         private GCHandle _callbackTableHandle;
 
         public event EventHandler<string>? StatusChanged;
+        public event EventHandler<SyncActivityEventArgs>? ActivityOccurred;
 
         public bool IsRunning => _isRunning;
 
@@ -400,16 +402,17 @@ namespace Nuvii_Sync.CloudSync
         /// <summary>
         /// Hydrates a placeholder file (downloads content from server).
         /// Based on CloudMirror behavior when file is pinned.
+        /// After hydration, marks the file as in-sync.
         /// </summary>
         private static void HydrateFile(string path)
         {
             var handle = CfApi.CreateFileW(
                 path,
-                0, // No access needed
+                CfApi.GENERIC_READ | CfApi.GENERIC_WRITE,
                 CfApi.FILE_SHARE_READ | CfApi.FILE_SHARE_WRITE | CfApi.FILE_SHARE_DELETE,
                 nint.Zero,
                 CfApi.OPEN_EXISTING,
-                CfApi.FILE_ATTRIBUTE_NORMAL,
+                CfApi.FILE_FLAG_BACKUP_SEMANTICS,
                 nint.Zero);
 
             if (handle == CfApi.INVALID_HANDLE_VALUE) return;
@@ -420,6 +423,23 @@ namespace Nuvii_Sync.CloudSync
                 if (hr < 0)
                 {
                     Trace.WriteLine($"  CfHydratePlaceholder failed: 0x{hr:X8}");
+                    return;
+                }
+
+                // Mark as in-sync after successful hydration
+                hr = CfApi.CfSetInSyncState(
+                    handle,
+                    CF_IN_SYNC_STATE.CF_IN_SYNC_STATE_IN_SYNC,
+                    CF_SET_IN_SYNC_FLAGS.CF_SET_IN_SYNC_FLAG_NONE,
+                    out _);
+
+                if (hr < 0)
+                {
+                    Trace.WriteLine($"  CfSetInSyncState after hydrate failed: 0x{hr:X8}");
+                }
+                else
+                {
+                    Trace.WriteLine($"  Hydrated and marked in-sync: {Path.GetFileName(path)}");
                 }
             }
             finally
@@ -431,26 +451,143 @@ namespace Nuvii_Sync.CloudSync
         /// <summary>
         /// Dehydrates a placeholder file (removes local content, keeps placeholder).
         /// Based on CloudMirror behavior when file is unpinned.
+        /// After dehydration, marks the file as in-sync.
         /// </summary>
         private static void DehydrateFile(string path)
         {
+            Trace.WriteLine($"  [Dehydrate] Starting: {path}");
+
+            // First check if it's actually a placeholder and get its state
+            var attributes = CfApi.GetFileAttributesW(path);
+            if (attributes == CfApi.INVALID_FILE_ATTRIBUTES)
+            {
+                Trace.WriteLine($"  [Dehydrate] Failed to get attributes");
+                return;
+            }
+
+            // Check placeholder state
+            var placeholderState = CfApi.CfGetPlaceholderStateFromAttributeTag(attributes, CfApi.IO_REPARSE_TAG_CLOUD);
+            Trace.WriteLine($"  [Dehydrate] Placeholder state: {placeholderState}");
+
+            // Check if already dehydrated (has OFFLINE attribute = no local data)
+            const uint FILE_ATTRIBUTE_OFFLINE = 0x1000;
+            if ((attributes & FILE_ATTRIBUTE_OFFLINE) != 0)
+            {
+                Trace.WriteLine($"  [Dehydrate] File already dehydrated, just marking in-sync");
+                // Just need to mark in-sync
+                MarkFileInSync(path);
+                return;
+            }
+
+            // Use minimal access - CloudMirror uses 0 for access
+            // But CfSetInSyncState needs WRITE_DATA or WRITE_DAC
             var handle = CfApi.CreateFileW(
                 path,
-                CfApi.GENERIC_READ | CfApi.GENERIC_WRITE,
+                CfApi.GENERIC_WRITE, // Need write for CfSetInSyncState
                 CfApi.FILE_SHARE_READ | CfApi.FILE_SHARE_WRITE | CfApi.FILE_SHARE_DELETE,
                 nint.Zero,
                 CfApi.OPEN_EXISTING,
-                CfApi.FILE_ATTRIBUTE_NORMAL,
+                CfApi.FILE_FLAG_BACKUP_SEMANTICS,
                 nint.Zero);
 
-            if (handle == CfApi.INVALID_HANDLE_VALUE) return;
+            if (handle == CfApi.INVALID_HANDLE_VALUE)
+            {
+                var lastError = CfApi.GetLastError();
+                Trace.WriteLine($"  [Dehydrate] CreateFileW failed, error: {lastError} (0x{lastError:X})");
+
+                // Try with read-only access just for dehydration
+                handle = CfApi.CreateFileW(
+                    path,
+                    0, // No access - sufficient for CfDehydratePlaceholder
+                    CfApi.FILE_SHARE_READ | CfApi.FILE_SHARE_WRITE | CfApi.FILE_SHARE_DELETE,
+                    nint.Zero,
+                    CfApi.OPEN_EXISTING,
+                    CfApi.FILE_FLAG_BACKUP_SEMANTICS,
+                    nint.Zero);
+
+                if (handle == CfApi.INVALID_HANDLE_VALUE)
+                {
+                    lastError = CfApi.GetLastError();
+                    Trace.WriteLine($"  [Dehydrate] CreateFileW (no access) also failed, error: {lastError}");
+                    return;
+                }
+
+                Trace.WriteLine($"  [Dehydrate] Opened with no access, will dehydrate only");
+            }
 
             try
             {
                 var hr = CfApi.CfDehydratePlaceholder(handle, 0, -1, CF_DEHYDRATE_FLAGS.CF_DEHYDRATE_FLAG_NONE, nint.Zero);
                 if (hr < 0)
                 {
-                    Trace.WriteLine($"  CfDehydratePlaceholder failed: 0x{hr:X8}");
+                    Trace.WriteLine($"  [Dehydrate] CfDehydratePlaceholder failed: 0x{hr:X8}");
+                    return;
+                }
+
+                Trace.WriteLine($"  [Dehydrate] CfDehydratePlaceholder succeeded");
+
+                // Mark as in-sync after successful dehydration
+                hr = CfApi.CfSetInSyncState(
+                    handle,
+                    CF_IN_SYNC_STATE.CF_IN_SYNC_STATE_IN_SYNC,
+                    CF_SET_IN_SYNC_FLAGS.CF_SET_IN_SYNC_FLAG_NONE,
+                    out _);
+
+                if (hr < 0)
+                {
+                    Trace.WriteLine($"  [Dehydrate] CfSetInSyncState failed: 0x{hr:X8}");
+                    // Try reopening with write access for SetInSyncState
+                    CfApi.CloseHandle(handle);
+                    MarkFileInSync(path);
+                }
+                else
+                {
+                    Trace.WriteLine($"  [Dehydrate] Completed: {Path.GetFileName(path)}");
+                }
+            }
+            finally
+            {
+                if (handle != CfApi.INVALID_HANDLE_VALUE)
+                    CfApi.CloseHandle(handle);
+            }
+        }
+
+        /// <summary>
+        /// Helper to mark a file as in-sync with a fresh handle.
+        /// </summary>
+        private static void MarkFileInSync(string path)
+        {
+            var handle = CfApi.CreateFileW(
+                path,
+                CfApi.GENERIC_WRITE,
+                CfApi.FILE_SHARE_READ | CfApi.FILE_SHARE_WRITE | CfApi.FILE_SHARE_DELETE,
+                nint.Zero,
+                CfApi.OPEN_EXISTING,
+                CfApi.FILE_FLAG_BACKUP_SEMANTICS,
+                nint.Zero);
+
+            if (handle == CfApi.INVALID_HANDLE_VALUE)
+            {
+                var lastError = CfApi.GetLastError();
+                Trace.WriteLine($"  [MarkInSync] CreateFileW failed: {lastError}");
+                return;
+            }
+
+            try
+            {
+                var hr = CfApi.CfSetInSyncState(
+                    handle,
+                    CF_IN_SYNC_STATE.CF_IN_SYNC_STATE_IN_SYNC,
+                    CF_SET_IN_SYNC_FLAGS.CF_SET_IN_SYNC_FLAG_NONE,
+                    out _);
+
+                if (hr >= 0)
+                {
+                    Trace.WriteLine($"  [MarkInSync] Success: {Path.GetFileName(path)}");
+                }
+                else
+                {
+                    Trace.WriteLine($"  [MarkInSync] CfSetInSyncState failed: 0x{hr:X8}");
                 }
             }
             finally
@@ -472,6 +609,16 @@ namespace Nuvii_Sync.CloudSync
 
             // Notify shell to refresh the folder view
             NotifyShellOfChange(e.Operation.CurrentPath);
+
+            // Notify activity for UI
+            var activityType = e.Operation.Type switch
+            {
+                SyncOperationType.Create => SyncActivityType.Uploaded,
+                SyncOperationType.Rename => SyncActivityType.Renamed,
+                SyncOperationType.Delete => SyncActivityType.Deleted,
+                _ => SyncActivityType.Synced
+            };
+            NotifyActivity(e.Operation.CurrentPath, activityType);
         }
 
         /// <summary>
@@ -504,6 +651,7 @@ namespace Nuvii_Sync.CloudSync
                 Trace.WriteLine($"[Server->Client] Creating placeholder: {relativePath}");
 
                 // Use Placeholders.CreateSingle which handles both files and directories
+                // Note: In production, activity notification will come from SignalR handler
                 if (Placeholders.CreateSingle(serverPath, clientPath))
                 {
                     NotifyShellOfChange(clientPath);
@@ -531,6 +679,7 @@ namespace Nuvii_Sync.CloudSync
 
                 Trace.WriteLine($"[Server->Client] Deleting placeholder: {relativePath}");
 
+                // Note: In production, activity notification will come from SignalR handler
                 if (Placeholders.Delete(clientPath))
                 {
                     NotifyShellOfChange(Path.GetDirectoryName(clientPath) ?? clientPath);
@@ -563,6 +712,7 @@ namespace Nuvii_Sync.CloudSync
                 if (Placeholders.Rename(oldClientPath, newClientPath))
                 {
                     NotifyShellOfChange(newClientPath);
+                    // Note: In production, activity notification will come from SignalR handler
                 }
             }
             catch (Exception ex)
@@ -606,11 +756,45 @@ namespace Nuvii_Sync.CloudSync
 
         #endregion
 
+        #region Activity Notification
+
+        private void NotifyActivity(string fullPath, SyncActivityType activityType)
+        {
+            // Only notify for files, not directories
+            if (Directory.Exists(fullPath)) return;
+
+            var fileName = Path.GetFileName(fullPath);
+            var folderName = Path.GetFileName(Path.GetDirectoryName(fullPath) ?? "");
+
+            ActivityOccurred?.Invoke(this, new SyncActivityEventArgs(fileName, folderName, fullPath, activityType));
+        }
+
+        #endregion
+
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
             StopAsync(unregister: false).GetAwaiter().GetResult();
+        }
+    }
+
+    /// <summary>
+    /// Event args for sync activity notifications.
+    /// </summary>
+    public class SyncActivityEventArgs : EventArgs
+    {
+        public string FileName { get; }
+        public string FolderName { get; }
+        public string FullPath { get; }
+        public SyncActivityType ActivityType { get; }
+
+        public SyncActivityEventArgs(string fileName, string folderName, string fullPath, SyncActivityType activityType)
+        {
+            FileName = fileName;
+            FolderName = folderName;
+            FullPath = fullPath;
+            ActivityType = activityType;
         }
     }
 }

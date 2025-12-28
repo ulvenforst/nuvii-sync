@@ -118,9 +118,9 @@ namespace Nuvii_Sync
             _popupWindow?.UpdateStatus(status, isSyncing);
         }
 
-        public void AddSyncActivity(string fileName, string folderPath, SyncActivityType activityType)
+        public void AddSyncActivity(string fileName, string folderPath, string fullPath, SyncActivityType activityType)
         {
-            _popupWindow?.AddActivity(fileName, folderPath, activityType);
+            _popupWindow?.AddActivity(fileName, folderPath, fullPath, activityType);
         }
     }
 }

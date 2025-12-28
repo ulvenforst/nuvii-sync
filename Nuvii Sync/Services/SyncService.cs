@@ -17,6 +17,7 @@ namespace Nuvii_Sync.Services
         private bool _disposed;
 
         public event EventHandler<string>? StatusChanged;
+        public event EventHandler<SyncActivityEventArgs>? ActivityOccurred;
 
         public bool IsRunning => _syncProvider?.IsRunning ?? false;
         public bool IsInitialized => _syncProvider != null;
@@ -37,6 +38,7 @@ namespace Nuvii_Sync.Services
             {
                 _syncProvider = new CloudSyncProvider();
                 _syncProvider.StatusChanged += OnProviderStatusChanged;
+                _syncProvider.ActivityOccurred += OnProviderActivityOccurred;
             }
 
             // If already running with same folders, just return success
@@ -88,6 +90,11 @@ namespace Nuvii_Sync.Services
             StatusChanged?.Invoke(this, status);
         }
 
+        private void OnProviderActivityOccurred(object? sender, SyncActivityEventArgs e)
+        {
+            ActivityOccurred?.Invoke(this, e);
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -96,6 +103,7 @@ namespace Nuvii_Sync.Services
             if (_syncProvider != null)
             {
                 _syncProvider.StatusChanged -= OnProviderStatusChanged;
+                _syncProvider.ActivityOccurred -= OnProviderActivityOccurred;
                 _syncProvider.Dispose();
                 _syncProvider = null;
             }

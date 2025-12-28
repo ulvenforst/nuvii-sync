@@ -323,6 +323,9 @@ namespace Nuvii_Sync.CloudSync.Native
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool CloseHandle(nint hObject);
 
+        [DllImport("kernel32.dll")]
+        public static extern uint GetLastError();
+
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern nint FindFirstFileW(string lpFileName, out WIN32_FIND_DATA lpFindFileData);
 

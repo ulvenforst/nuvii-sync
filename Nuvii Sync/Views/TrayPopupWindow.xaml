@@ -11,7 +11,7 @@
     Title="Nuvii Sync">
 
     <Window.SystemBackdrop>
-        <MicaBackdrop />
+        <MicaBackdrop/>
     </Window.SystemBackdrop>
 
     <Grid>
@@ -22,7 +22,8 @@
         </Grid.RowDefinitions>
 
         <!-- Header with status -->
-        <Grid Grid.Row="0" Padding="16,16,16,12">
+        <Grid Grid.Row="0"
+              Padding="16,16,16,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -30,13 +31,18 @@
             </Grid.ColumnDefinitions>
 
             <!-- App icon and name -->
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
-                <Image Width="32" Height="32" Source="ms-appx:///Assets/NuviiLocalSync.ico"/>
+            <StackPanel Grid.Column="0"
+                        Orientation="Horizontal"
+                        Spacing="12">
+                <Image Width="32"
+                       Height="32"
+                       Source="ms-appx:///Assets/NuviiLocalSync.ico"/>
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="Nuvii Sync"
                                FontWeight="SemiBold"
                                FontSize="14"/>
-                    <StackPanel Orientation="Horizontal" Spacing="6">
+                    <StackPanel Orientation="Horizontal"
+                                Spacing="6">
                         <FontIcon x:Name="StatusIconElement"
                                   FontFamily="{StaticResource SymbolThemeFontFamily}"
                                   Glyph="&#xE930;"
@@ -82,31 +88,46 @@
                            HorizontalAlignment="Center"/>
             </StackPanel>
 
-            <!-- Activity list -->
+            <!-- Activity list with scroll -->
             <ListView x:Name="ActivityListView"
                       Visibility="Collapsed"
                       SelectionMode="None"
-                      IsItemClickEnabled="False"
+                      IsItemClickEnabled="True"
+                      ItemClick="ActivityListView_ItemClick"
                       Padding="4,0">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment"
+                                Value="Stretch"/>
+                        <Setter Property="Padding"
+                                Value="0"/>
+                        <Setter Property="Margin"
+                                Value="0"/>
+                    </Style>
+                </ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="models:SyncActivityItem">
-                        <Grid Padding="12,8" ColumnSpacing="12">
+                        <Grid Padding="12,10"
+                              ColumnSpacing="12"
+                              Opacity="{x:Bind TextOpacity}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <!-- File type icon -->
+                            <!-- Activity type icon -->
                             <FontIcon Grid.Column="0"
                                       FontFamily="{StaticResource SymbolThemeFontFamily}"
                                       Glyph="{x:Bind Icon}"
-                                      FontSize="20"
-                                      Foreground="{ThemeResource AccentFillColorDefaultBrush}"
+                                      FontSize="16"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                       VerticalAlignment="Center"/>
 
                             <!-- File info -->
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <StackPanel Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Spacing="2">
                                 <TextBlock Text="{x:Bind FileName}"
                                            FontSize="13"
                                            TextTrimming="CharacterEllipsis"
@@ -114,13 +135,15 @@
                                 <TextBlock FontSize="11"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}">
                                     <Run Text="{x:Bind ActivityDescription}"/>
-                                    <Run Text="{x:Bind FolderPath}"/>
+                                    <Run Text=" "/>
+                                    <Run Text="{x:Bind FolderPath}"
+                                         Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
                                 </TextBlock>
                             </StackPanel>
 
                             <!-- Time -->
                             <TextBlock Grid.Column="2"
-                                       Text="{x:Bind TimeAgo}"
+                                       Text="{x:Bind FormattedTime}"
                                        FontSize="11"
                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                        VerticalAlignment="Center"/>
@@ -149,11 +172,13 @@
                             HorizontalAlignment="Stretch"
                             Margin="0,0,4,0"
                             Padding="12,8">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
+                        <StackPanel Orientation="Horizontal"
+                                    Spacing="8">
                             <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}"
                                       Glyph="&#xE838;"
                                       FontSize="14"/>
-                            <TextBlock Text="Abrir carpeta" FontSize="13"/>
+                            <TextBlock Text="Abrir carpeta"
+                                       FontSize="13"/>
                         </StackPanel>
                     </Button>
 
@@ -164,11 +189,13 @@
                             HorizontalAlignment="Stretch"
                             Margin="4,0,0,0"
                             Padding="12,8">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
+                        <StackPanel Orientation="Horizontal"
+                                    Spacing="8">
                             <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}"
                                       Glyph="&#xE774;"
                                       FontSize="14"/>
-                            <TextBlock Text="Ver en línea" FontSize="13"/>
+                            <TextBlock Text="Ver en línea"
+                                       FontSize="13"/>
                         </StackPanel>
                     </Button>
                 </Grid>
@@ -178,11 +205,14 @@
                         Click="QuitButton_Click"
                         HorizontalAlignment="Stretch"
                         Padding="12,8">
-                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <StackPanel Orientation="Horizontal"
+                                Spacing="8"
+                                HorizontalAlignment="Center">
                         <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}"
                                   Glyph="&#xE7E8;"
                                   FontSize="14"/>
-                        <TextBlock Text="Salir de Nuvii Sync" FontSize="13"/>
+                        <TextBlock Text="Salir de Nuvii Sync"
+                                   FontSize="13"/>
                     </StackPanel>
                 </Button>
             </StackPanel>
