@@ -571,8 +571,13 @@ namespace Nuvii_Sync.CloudSync
 
             if (Directory.Exists(serverPath))
             {
+                // Before deleting, enumerate all files for UI notification
+                operation.DeletedFilePaths = Directory.EnumerateFiles(serverPath, "*", SearchOption.AllDirectories)
+                    .Select(f => f.Substring(_serverFolder.Length).TrimStart(Path.DirectorySeparatorChar))
+                    .ToList();
+
                 Directory.Delete(serverPath, recursive: true);
-                Trace.WriteLine($"  Deleted directory on server: {operation.RelativePath}");
+                Trace.WriteLine($"  Deleted directory on server: {operation.RelativePath} ({operation.DeletedFilePaths.Count} files)");
             }
             else if (File.Exists(serverPath))
             {

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace Nuvii_Sync.CloudSync
@@ -39,6 +40,11 @@ namespace Nuvii_Sync.CloudSync
         public DateTime CreatedAt { get; set; }
         public CancellationTokenSource? TimerCts { get; set; }
         public bool IsDirectory { get; set; }
+        /// <summary>
+        /// For directory Delete operations, contains the relative paths of all files
+        /// that were deleted inside the directory (for UI notification purposes).
+        /// </summary>
+        public List<string>? DeletedFilePaths { get; set; }
     }
 
     /// <summary>

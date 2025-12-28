@@ -698,14 +698,29 @@ namespace Nuvii_Sync.CloudSync
             // Notify shell to refresh the folder view
             NotifyShellOfChange(e.Operation.CurrentPath);
 
-            // Skip directories - only show file activity in UI
-            if (e.Operation.IsDirectory)
+            // Skip Modified operations - only show significant actions (Create, Delete, Rename, Move)
+            if (e.Operation.Type == SyncOperationType.Modified)
             {
                 return;
             }
 
-            // Skip Modified operations - only show significant actions (Create, Delete, Rename, Move)
-            if (e.Operation.Type == SyncOperationType.Modified)
+            // Handle directory Delete specially - notify for each file inside
+            if (e.Operation.IsDirectory && e.Operation.Type == SyncOperationType.Delete)
+            {
+                // Notify for each file that was deleted inside the directory
+                if (e.Operation.DeletedFilePaths != null)
+                {
+                    foreach (var relativePath in e.Operation.DeletedFilePaths)
+                    {
+                        var fullPath = Path.Combine(ProviderFolderLocations.ClientFolder, relativePath);
+                        NotifyActivity(fullPath, SyncActivityType.Deleted);
+                    }
+                }
+                return;
+            }
+
+            // Skip other directory operations - only show file activity in UI
+            if (e.Operation.IsDirectory)
             {
                 return;
             }
