@@ -59,12 +59,38 @@
             <!-- Settings button -->
             <Button Grid.Column="2"
                     x:Name="SettingsButton"
-                    Click="SettingsButton_Click"
                     Background="Transparent"
                     BorderBrush="Transparent"
-                    ToolTipService.ToolTip="Configuración">
+                    ToolTipService.ToolTip="Opciones">
+                <Button.Flyout>
+                    <MenuFlyout Placement="BottomEdgeAlignedRight">
+                        <MenuFlyoutItem Text="Configuración"
+                                        Click="SettingsMenuItem_Click">
+                            <MenuFlyoutItem.Icon>
+                                <FontIcon Glyph="&#xE713;"/>
+                            </MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutSubItem Text="Pausar sincronización">
+                            <MenuFlyoutSubItem.Icon>
+                                <FontIcon Glyph="&#xE769;"/>
+                            </MenuFlyoutSubItem.Icon>
+                            <MenuFlyoutItem Text="2 horas"
+                                            Click="PauseSync2Hours_Click"/>
+                            <MenuFlyoutItem Text="8 horas"
+                                            Click="PauseSync8Hours_Click"/>
+                            <MenuFlyoutItem Text="Indefinidamente"
+                                            Click="PauseSyncIndefinitely_Click"/>
+                        </MenuFlyoutSubItem>
+                        <MenuFlyoutItem Text="Salir de Nuvii Sync"
+                                        Click="QuitMenuItem_Click">
+                            <MenuFlyoutItem.Icon>
+                                <FontIcon Glyph="&#xE7E8;"/>
+                            </MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                    </MenuFlyout>
+                </Button.Flyout>
                 <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}"
-                          Glyph="&#xE713;"
+                          Glyph="&#xE712;"
                           FontSize="16"/>
             </Button>
         </Grid>
@@ -207,22 +233,6 @@
                         </StackPanel>
                     </Button>
                 </Grid>
-
-                <!-- Quit button -->
-                <Button x:Name="QuitButton"
-                        Click="QuitButton_Click"
-                        HorizontalAlignment="Stretch"
-                        Padding="12,8">
-                    <StackPanel Orientation="Horizontal"
-                                Spacing="8"
-                                HorizontalAlignment="Center">
-                        <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}"
-                                  Glyph="&#xE7E8;"
-                                  FontSize="14"/>
-                        <TextBlock Text="Salir de Nuvii Sync"
-                                   FontSize="13"/>
-                    </StackPanel>
-                </Button>
             </StackPanel>
         </Border>
     </Grid>

@@ -24,6 +24,7 @@ namespace Nuvii_Sync.Models
             SyncActivityType.Downloaded => "\uE896",   // Download icon
             SyncActivityType.Deleted => "\uE74D",      // Delete icon
             SyncActivityType.Renamed => "\uE8AC",      // Rename icon
+            SyncActivityType.Moved => "\uE8DE",        // Move icon (folder with arrow)
             SyncActivityType.Synced => "\uE8FB",       // Sync icon
             _ => "\uE8B7"                               // File icon
         };
@@ -34,6 +35,7 @@ namespace Nuvii_Sync.Models
             SyncActivityType.Downloaded => "Descargado de",
             SyncActivityType.Deleted => "Eliminado de",
             SyncActivityType.Renamed => "Renombrado en",
+            SyncActivityType.Moved => "Movido a",
             SyncActivityType.Synced => "Sincronizado a",
             _ => "Modificado en"
         };
@@ -72,6 +74,7 @@ namespace Nuvii_Sync.Models
         Downloaded,
         Deleted,
         Renamed,
+        Moved,
         Synced
     }
 }

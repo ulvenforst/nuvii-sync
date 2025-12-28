@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Nuvii_Sync.CloudSync.Native;
@@ -26,6 +27,12 @@ namespace Nuvii_Sync.CloudSync
         private readonly ConcurrentDictionary<string, PendingOperation> _pendingOperations = new();
         private readonly TimeSpan _debounceDelay;
         private readonly int _maxRetries;
+
+        // Track recently deleted files to detect Move operations (Delete + Create = Move)
+        // When FileSystemWatcher fires Delete+Create instead of Renamed for cross-directory moves
+        private readonly ConcurrentDictionary<string, DeletedFileInfo> _recentlyDeleted = new();
+        private readonly TimeSpan _moveDetectionWindow = TimeSpan.FromSeconds(5);
+
         private bool _disposed;
 
         public event EventHandler<SyncEventArgs>? OperationCompleted;
@@ -52,14 +59,61 @@ namespace Nuvii_Sync.CloudSync
 
         /// <summary>
         /// Called when a file or folder is created in the client folder.
+        /// Detects Move operations when a Delete+Create happens within a short window.
         /// </summary>
         public void OnCreated(string fullPath)
         {
             if (_disposed) return;
 
             var relativePath = GetRelativePath(fullPath);
+            var fileName = Path.GetFileName(fullPath);
             Trace.WriteLine($"[Client→Server] Created detected: {relativePath}");
 
+            // Check if this is actually a Move (Delete + Create with same filename)
+            if (_recentlyDeleted.TryRemove(fileName, out var deletedInfo))
+            {
+                // Check if the delete was recent enough
+                if (DateTime.UtcNow - deletedInfo.DeletedAt <= _moveDetectionWindow)
+                {
+                    // This is a Move! Cancel the pending Delete and create a Rename operation
+                    Trace.WriteLine($"  Detected MOVE: {deletedInfo.RelativePath} → {relativePath}");
+
+                    // Cancel the pending Delete operation
+                    if (_pendingOperations.TryRemove(deletedInfo.OriginalPath, out var pendingDelete))
+                    {
+                        CancelTimer(pendingDelete);
+                    }
+
+                    // Create a Rename operation (which handles moves)
+                    var moveOperation = new PendingOperation
+                    {
+                        CurrentPath = fullPath,
+                        OriginalPath = deletedInfo.OriginalPath,
+                        RelativePath = relativePath,
+                        OriginalRelativePath = deletedInfo.RelativePath,
+                        Type = SyncOperationType.Rename, // Rename handles both rename and move
+                        State = OperationState.Pending,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    _pendingOperations.AddOrUpdate(
+                        fullPath,
+                        _ =>
+                        {
+                            StartDebounceTimer(moveOperation);
+                            return moveOperation;
+                        },
+                        (_, existing) =>
+                        {
+                            CancelTimer(existing);
+                            StartDebounceTimer(moveOperation);
+                            return moveOperation;
+                        });
+                    return;
+                }
+            }
+
+            // Normal Create operation
             var operation = new PendingOperation
             {
                 CurrentPath = fullPath,
@@ -165,6 +219,7 @@ namespace Nuvii_Sync.CloudSync
             if (_disposed) return;
 
             var relativePath = GetRelativePath(fullPath);
+            var fileName = Path.GetFileName(fullPath);
             Trace.WriteLine($"[Client→Server] Deleted detected: {relativePath}");
 
             // Check if there's a pending operation for this path
@@ -180,6 +235,20 @@ namespace Nuvii_Sync.CloudSync
                 }
             }
 
+            // Track this delete for potential Move detection (Delete + Create = Move)
+            // FileSystemWatcher sometimes fires Delete+Create instead of Renamed for cross-directory moves
+            var deletedInfo = new DeletedFileInfo
+            {
+                OriginalPath = fullPath,
+                RelativePath = relativePath,
+                FileName = fileName,
+                DeletedAt = DateTime.UtcNow
+            };
+            _recentlyDeleted.AddOrUpdate(fileName, deletedInfo, (_, __) => deletedInfo);
+
+            // Clean up old entries
+            CleanupOldDeletedEntries();
+
             // Queue delete operation
             var deleteOperation = new PendingOperation
             {
@@ -192,6 +261,23 @@ namespace Nuvii_Sync.CloudSync
 
             _pendingOperations.TryAdd(fullPath, deleteOperation);
             StartDebounceTimer(deleteOperation);
+        }
+
+        /// <summary>
+        /// Removes old entries from the recently deleted tracking dictionary.
+        /// </summary>
+        private void CleanupOldDeletedEntries()
+        {
+            var cutoff = DateTime.UtcNow - _moveDetectionWindow - TimeSpan.FromSeconds(5);
+            var toRemove = _recentlyDeleted
+                .Where(kvp => kvp.Value.DeletedAt < cutoff)
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            foreach (var key in toRemove)
+            {
+                _recentlyDeleted.TryRemove(key, out _);
+            }
         }
 
         /// <summary>
@@ -709,5 +795,17 @@ namespace Nuvii_Sync.CloudSync
         {
             Exception = exception;
         }
+    }
+
+    /// <summary>
+    /// Tracks information about a recently deleted file for Move detection.
+    /// Used to convert Delete+Create sequences into Move operations.
+    /// </summary>
+    internal class DeletedFileInfo
+    {
+        public string OriginalPath { get; set; } = string.Empty;
+        public string RelativePath { get; set; } = string.Empty;
+        public string FileName { get; set; } = string.Empty;
+        public DateTime DeletedAt { get; set; }
     }
 }

@@ -185,15 +185,30 @@ namespace Nuvii_Sync.Views
             }
         }
 
-        private void SettingsButton_Click(object sender, RoutedEventArgs e)
+        private void SettingsMenuItem_Click(object sender, RoutedEventArgs e)
         {
             SettingsRequested?.Invoke(this, EventArgs.Empty);
             Hide();
         }
 
-        private void QuitButton_Click(object sender, RoutedEventArgs e)
+        private void QuitMenuItem_Click(object sender, RoutedEventArgs e)
         {
             App.Current.QuitApplication();
+        }
+
+        private void PauseSync2Hours_Click(object sender, RoutedEventArgs e)
+        {
+            // TODO: Implement pause sync for 2 hours
+        }
+
+        private void PauseSync8Hours_Click(object sender, RoutedEventArgs e)
+        {
+            // TODO: Implement pause sync for 8 hours
+        }
+
+        private void PauseSyncIndefinitely_Click(object sender, RoutedEventArgs e)
+        {
+            // TODO: Implement pause sync indefinitely
         }
 
         #region Native Methods

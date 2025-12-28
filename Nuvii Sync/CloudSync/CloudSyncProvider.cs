@@ -611,13 +611,25 @@ namespace Nuvii_Sync.CloudSync
             NotifyShellOfChange(e.Operation.CurrentPath);
 
             // Notify activity for UI
-            var activityType = e.Operation.Type switch
+            SyncActivityType activityType;
+            if (e.Operation.Type == SyncOperationType.Rename)
             {
-                SyncOperationType.Create => SyncActivityType.Uploaded,
-                SyncOperationType.Rename => SyncActivityType.Renamed,
-                SyncOperationType.Delete => SyncActivityType.Deleted,
-                _ => SyncActivityType.Synced
-            };
+                // Determine if it's a Move (different directory) or Rename (same directory)
+                var oldDir = Path.GetDirectoryName(e.Operation.OriginalRelativePath ?? "");
+                var newDir = Path.GetDirectoryName(e.Operation.RelativePath ?? "");
+                activityType = !string.Equals(oldDir, newDir, StringComparison.OrdinalIgnoreCase)
+                    ? SyncActivityType.Moved
+                    : SyncActivityType.Renamed;
+            }
+            else
+            {
+                activityType = e.Operation.Type switch
+                {
+                    SyncOperationType.Create => SyncActivityType.Uploaded,
+                    SyncOperationType.Delete => SyncActivityType.Deleted,
+                    _ => SyncActivityType.Synced
+                };
+            }
             NotifyActivity(e.Operation.CurrentPath, activityType);
         }
 
