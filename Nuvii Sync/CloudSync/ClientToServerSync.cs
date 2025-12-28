@@ -25,18 +25,23 @@ namespace Nuvii_Sync.CloudSync
     {
         private readonly string _clientFolder;
         private readonly string _serverFolder;
-        private readonly ConcurrentDictionary<string, PendingOperation> _pendingOperations = new();
+        // Use case-insensitive comparison for paths (Windows is case-insensitive)
+        private readonly ConcurrentDictionary<string, PendingOperation> _pendingOperations =
+            new(StringComparer.OrdinalIgnoreCase);
         private readonly TimeSpan _debounceDelay;
         private readonly int _maxRetries;
 
         // Track recently deleted files to detect Move operations (Delete + Create = Move)
         // When FileSystemWatcher fires Delete+Create instead of Renamed for cross-directory moves
-        private readonly ConcurrentDictionary<string, DeletedFileInfo> _recentlyDeleted = new();
+        // Key is filename only (not path), so also case-insensitive
+        private readonly ConcurrentDictionary<string, DeletedFileInfo> _recentlyDeleted =
+            new(StringComparer.OrdinalIgnoreCase);
         private readonly TimeSpan _moveDetectionWindow = TimeSpan.FromSeconds(5);
 
         // Track paths that should be suppressed from server-to-client sync
         // This prevents feedback loops when our operations trigger server file events
-        private readonly ConcurrentDictionary<string, DateTime> _suppressedPaths = new();
+        private readonly ConcurrentDictionary<string, DateTime> _suppressedPaths =
+            new(StringComparer.OrdinalIgnoreCase);
         private readonly TimeSpan _suppressionDuration = TimeSpan.FromSeconds(5);
 
         private bool _disposed;
